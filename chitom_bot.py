@@ -180,24 +180,27 @@ def edit_command(message):
         # 1. Изменяем картинку программно
         edited_file = edit_user_image(downloaded_file, user_prompt)
         
-        # 2. Генерируем смешной философский текст от Gemini с учетом картинки и промпта
-        image_obj = Image.open(io.BytesIO(downloaded_file))
+        # 2. Генерируем текст от Gemini
         response = model.generate_content([
-            f"Пользователь прислал картинку и попросил ее изменить с таким промптом: '{user_prompt}'. "
-            f"Напиши свой фирменный едкий, абсурдный комментарий в стиле лора (упомяни бастурму, клубок и кого-то из знакомых)."
+            f"Пользователь прислал картинку и попросил ее изменить с промптом: '{user_prompt}'. "
+            f"Напиши свой фирменный едкий комментарий в стиле лора (упомяни бастурму, клубок и кого-то из знакомых)."
         ])
         comment_text = response.text.replace('*', '')
 
         if edited_file:
-            # Отправляем измененную картинку с текстом-комментарием в качестве подписи
+            # СНАЧАЛА отправляем саму картинку чистой
             with open(edited_file, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, caption=comment_text, reply_to_message_id=target_message.message_id)
+                bot.send_photo(message.chat.id, photo, reply_to_message_id=target_message.message_id)
+            
+            # СРАЗУ ПОСЛЕ НЕЕ отправляем текстом весь лор, чтобы Telegram ничего не обрезал
+            bot.send_message(message.chat.id, comment_text, reply_to_message_id=target_message.message_id)
+            
             os.remove(edited_file)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
             bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"Ошибка обработки: {e}", message.chat.id, status_msg.message_id)
+        bot.edit_message_text(f"Ошибка обработки: {e}", message.chat.id, status_msg.message_id))
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
