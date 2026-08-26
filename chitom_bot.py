@@ -3,10 +3,10 @@ import os
 import threading
 import random
 import time
-import io  # НОВОЕ: нужно для работы с картинками и аудио в оперативной памяти
+import io
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
-from PIL import Image, ImageDraw, ImageFont, ImageFile
+from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -19,27 +19,26 @@ genai.configure(api_key=GEMINI_API_KEY)
 TEMPLATE_NAME = 'template.jpg'
 FONT_NAME = 'arial.ttf'       
 RESULT_NAME = 'meme_result.jpg'
+EDITED_NAME = 'edited_result.jpg'
 
 # Обязательно замените на юзернейм вашего бота
 BOT_USERNAME = '@chaitom_bot' 
 
-# НОВОЕ: Увеличенный архив для мемодела (хранит 1000 фраз!)
 chat_history = []
 HISTORY_LIMIT = 1000
 
-# Хранилище контекста диалога
 dialog_context = {}
 CONTEXT_LIMIT = 15
 
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HEAT_SPEECH", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
-Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЕПЕРЬ ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И СЛУШАТЬ АУДИО. Описывай то, что видишь или слышишь, через призму своего безумного характера.
+Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И СЛУШАТЬ АУДИО. Описывай то, что видишь или слышишь, через призму своего безумного характера.
 
 ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР:
 1. Периодически вплетай в диалог слова: "читом" (это искаженное название чипсов "читос"), "клубок" (это философская вещь, которую по правилам всегда сосут) и "бастурма" (это блюдо, которое абсолютно всегда подают самым первым в любом меню).
@@ -51,6 +50,68 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши строго обычным текстом."""
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
+image_generation_model = genai.ImageGenerationModel("imagen-3.0-generate-002")
+
+def generate_ai_image(prompt_text):
+    try:
+        result = image_generation_model.generate_images(
+            prompt=prompt_text,
+            number_of_images=1,
+            aspect_ratio="1:1",
+            safety_filter_level="allow_all",
+            person_generation="allow_adult"
+        )
+        for generated_image in result.images:
+            return generated_image._image_bytes
+    except Exception as e:
+        print(f"Ошибка генерации картинки Imagen: {e}")
+        return None
+
+# НОВОЕ: Функция для изменения присланной картинки через Pillow
+def edit_user_image(image_bytes, effect_name):
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        
+        # Выбираем эффект в зависимости от запроса
+        effect_name = effect_name.lower()
+        
+        if "invert" in effect_name or "инверт" in effect_name:
+            # Инверсия цветов
+            if img.mode == 'RGBA':
+                r, g, b, a = img.split()
+                img = Image.merge('RGB', (r, g, b))
+                img = ImageOps.invert(img)
+                img = img.convert('RGBA')
+            else:
+                img = ImageOps.invert(img.convert('RGB'))
+                
+        elif "bw" / "чб" in effect_name or "черно" in effect_name:
+            # Черно-белый стиль (настроение Степана Клитора)
+            img = img.convert('L').convert('RGB')
+            
+        elif "flip" in effect_name or "перевер" in effect_name:
+            # Перевернуть вверх дном
+            img = img.rotate(180)
+            
+        elif "mirror" in effect_name or "зеркал" in effect_name:
+            # Зеркальное отражение
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            
+        else:
+            # По умолчанию делаем безумный микс: инвертируем и добавляем рамку/надпись
+            img = ImageOps.invert(img.convert('RGB'))
+            draw = ImageDraw.Draw(img)
+            try:
+                font = ImageFont.truetype(FONT_NAME, 30)
+                draw.text((20, 20), "ЧИТОМ БОТ EDITED", fill="red", font=font)
+            except:
+                pass
+
+        img.save(EDITED_NAME)
+        return EDITED_NAME
+    except Exception as e:
+        print(f"Ошибка обработки картинки: {e}")
+        return None
 
 def text_wrap(text, font, max_width):
     lines = []
@@ -112,7 +173,54 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я проснулся. Умею читать, смотреть картинки, слушать голосовые и разматывать клубки.")
+    bot.reply_to(message, "Я на связи! Умею генерировать арты (/draw), делать мемы (/make_meme) и изменять присланные картинки (/edit).")
+
+@bot.message_handler(commands=['draw', 'gen'])
+def draw_command(message):
+    query = message.text.replace('/draw', '').replace('/gen', '').strip()
+    if not query:
+        bot.reply_to(message, "Напиши, что нарисовать! Пример: /draw кот ест читос")
+        return
+
+    status_msg = bot.reply_to(message, "Включаю нейросети, рисую шедевр...")
+    try:
+        image_bytes = generate_ai_image(query)
+        if image_bytes:
+            bot.send_photo(message.chat.id, image_bytes, reply_to_message_id=message.message_id)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+        else:
+            bot.edit_message_text("Ой, моя бастурма подгорела. Не удалось сгенерировать картинку.", message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"Ошибка генерации: {e}", message.chat.id, status_msg.message_id)
+
+# НОВОЕ: Обработчик команды /edit для изменения присланных картинок
+@bot.message_handler(commands=['edit'])
+def edit_command(message):
+    # Проверяем, есть ли картинка в сообщении или это реплай на картинку
+    target_message = message.reply_to_message if message.reply_to_message else message
+    
+    if not target_message.photo:
+        bot.reply_to(message, "Прикрепи картинку к сообщению или сделай реплай на фото с командой /edit [эффект: invert, bw, flip, mirror]")
+        return
+
+    effect_arg = message.text.replace('/edit', '').strip()
+    status_msg = bot.reply_to(message, "Применяю читом-фильтры к картинке...")
+
+    try:
+        file_id = target_message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        edited_file = edit_user_image(downloaded_file, effect_arg)
+        if edited_file:
+            with open(edited_file, 'rb') as photo:
+                bot.send_photo(message.chat.id, photo, reply_to_message_id=target_message.message_id)
+            os.remove(edited_file)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+        else:
+            bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"Ошибка обработки: {e}", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -142,24 +250,19 @@ def make_meme_command(message):
     except Exception as e:
         bot.edit_message_text(f"Системная ошибка: {e}", message.chat.id, status_msg.message_id)
 
-# НОВОЕ: Обработчик теперь ловит текст, фото и аудио/голосовые сообщения
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'audio'])
 def handle_message(message):
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Аноним"
-    
-    # Текст может быть в самом сообщении или в подписи к картинке
     text = message.text or message.caption or ""
     text = text.strip()
 
-    # 1. Глобальный сбор фраз для мемов (сохраняем только текст)
     if message.chat.type in ['group', 'supergroup'] and text and not text.startswith('/'):
         if text not in chat_history:
             chat_history.append(text)
             if len(chat_history) > HISTORY_LIMIT:
                 chat_history.pop(0)
 
-    # 2. Локальный сбор контекста (записываем, что человек скинул медиа)
     if chat_id not in dialog_context:
         dialog_context[chat_id] = []
     
@@ -168,17 +271,14 @@ def handle_message(message):
     if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
         dialog_context[chat_id].pop(0)
 
-    # 3. Проверка, позвали ли бота (если скинули просто фото без текста, ответит, если это реплай)
     if message.chat.type in ['group', 'supergroup']:
         is_mentioned = text and BOT_USERNAME in text
         is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id
         if not (is_mentioned or is_reply):
             return
 
-    # Отправляем статус "печатает...", так как обработка медиа занимает время
     bot.send_chat_action(chat_id, 'typing')
 
-    # 4. Обработка медиа и отправка в Gemini
     try:
         history_text = "\n".join(dialog_context[chat_id])
         prompt = (
@@ -186,18 +286,15 @@ def handle_message(message):
             f"Ответь на последнее сообщение пользователя {user_name}."
         )
 
-        # Подготавливаем данные для нейросети (сначала всегда идет текст промпта)
         gemini_contents = [prompt]
 
-        # Если в сообщении есть картинка, скачиваем ее и добавляем к запросу
         if message.photo:
-            file_id = message.photo[-1].file_id  # Берем самое высокое качество
+            file_id = message.photo[-1].file_id
             file_info = bot.get_file(file_id)
             downloaded_file = bot.download_file(file_info.file_path)
             image = Image.open(io.BytesIO(downloaded_file))
             gemini_contents.append(image)
 
-        # Если есть голосовое или аудио сообщение
         elif message.voice or message.audio:
             file_id = message.voice.file_id if message.voice else message.audio.file_id
             file_info = bot.get_file(file_id)
@@ -205,34 +302,33 @@ def handle_message(message):
             mime_type = "audio/ogg" if message.voice else "audio/mpeg"
             gemini_contents.append({"mime_type": mime_type, "data": downloaded_file})
 
-        # Отправляем весь пакет данных (текст + медиа) в Gemini
         response = model.generate_content(gemini_contents)
         clean_reply = response.text.replace('*', '')
         bot.reply_to(message, clean_reply)
         
-        # Бот запоминает свой ответ
         dialog_context[chat_id].append(f"читом бот: {clean_reply}")
         if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
             dialog_context[chat_id].pop(0)
             
     except Exception as e:
         print(f"Ошибка Gemini: {e}")
-        bot.reply_to(message, f"Ой, мой клубок запутался при обработке этого файла. Ошибка: {e}")
+        bot.reply_to(message, f"Ой, мой клубок запутался при обработке файла. Ошибка: {e}")
 
 # ==========================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with Vision and Audio is running!')
+        self.wfile.write(b'Bot with Image Editing is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
     server = HTTPServer(('0.0.0.0', port), DummyHandler)
     server.serve_forever()
 
+></head></html>
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот с мультимодальностью запущен...")
+    print("Читом бот с редактированием картинок запущен...")
     bot.infinity_polling()
