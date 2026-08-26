@@ -37,7 +37,7 @@ safety_settings = [
 ]
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
-Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И РЕДАКТИРОВАТЬ ИХ. Описывай то, что видишь, и комментируй изменения через призму своего безумного характера.
+Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И РЕДАКТИРОВАТЬ ИХ. Описывай то, что видишь, через призму своего безумного характера.
 
 ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР:
 1. Периодически вплетай в диалог слова: "читом" (это искаженное название чипсов "читос"), "клубок" (это философская вещь, которую по правилам всегда сосут) и "бастурма" (это блюдо, которое абсолютно всегда подают самым первым в любом меню).
@@ -97,7 +97,7 @@ def edit_user_image(image_bytes, user_prompt):
         bio = io.BytesIO()
         img.save(bio, format='JPEG')
         bio.seek(0)
-        bio.name = 'edited.jpg'  # <--- ВОТ ЭТА МАГИЧЕСКАЯ СТРОЧКА РЕШАЕТ ПРОБЛЕМУ
+        bio.name = 'edited.jpg'
         return bio
     except Exception as e:
         print(f"Ошибка изменения картинки: {e}")
@@ -156,35 +156,30 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи! Умею делать мемы (/make_meme), изменять картинки по промпту (/edit) и общаться.")
+    bot.reply_to(message, "Я на связи! /make_meme — сделать мем, /edit [текст] — изменить присланную картинку.")
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
     target_message = message.reply_to_message if message.reply_to_message else message
     
     if not target_message.photo:
-        bot.reply_to(message, "Сделай реплай на картинку с командой /edit и напиши, что изменить (например: /edit замени симбу на бургер)")
+        bot.reply_to(message, "Сделай реплай на картинку с командой /edit и напиши промпт (например: /edit замени симбу на бургер)")
         return
 
     user_prompt = message.text.replace('/edit', '').strip()
-    status_msg = bot.reply_to(message, "Включаю астральный фотошоп, переделываю картинку...")
+    status_msg = bot.reply_to(message, "Переделываю картинку...")
 
     try:
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
+        # Изменяем картинку в памяти
         photo_bio = edit_user_image(downloaded_file, user_prompt)
-        
-        response = model.generate_content([
-            f"Пользователь прислал картинку и попросил ее изменить с промптом: '{user_prompt}'. "
-            f"Напиши свой фирменный едкий комментарий в стиле лора (упомяни бастурму, клубок и кого-то из знакомых)."
-        ])
-        comment_text = response.text.replace('*', '')
 
         if photo_bio:
+            # Отправляем ТОЛЬКО измененную картинку без всяких текстов
             bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
-            bot.send_message(message.chat.id, comment_text, reply_to_message_id=target_message.message_id)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
             bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
@@ -288,7 +283,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with named buffer is running!')
+        self.wfile.write(b'Bot is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
