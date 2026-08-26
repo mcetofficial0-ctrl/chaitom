@@ -815,35 +815,95 @@ def edit_command(message):
 
 
 # ==========================================================
-# VEO 3.1 FAST
+# VEO 3.1 FAST — TEXT TO VIDEO + IMAGE TO VIDEO
 # ==========================================================
 
 VEO_MODEL = "veo-3.1-fast-generate-preview"
 
 
-def generate_veo_video(
-    prompt,
-    message_id,
-    status_callback=None
-):
+def get_video_source_image(message):
     """
-    Генерация видео через Veo 3.1 Fast.
-
-    Veo 3.1:
-    - 8 секунд
-    - нативное аудио
-    - 16:9 / 9:16
-    - 720p / 1080p / 4K
-
-    Для Fast по умолчанию используем 720p 16:9.
+    Ищет исходное изображение:
+    1. Фото, прикреплённое прямо к /video
+    2. Фото из reply на сообщение
     """
 
     # ------------------------------------------------------
-    # Русский prompt -> инструкция для Veo
+    # Фото прикреплено прямо к команде
     # ------------------------------------------------------
 
-    veo_prompt = f"""
-Create an 8-second video exactly according to the user's request.
+    if message.photo:
+        return message
+
+    # ------------------------------------------------------
+    # /video отправлен reply на фото
+    # ------------------------------------------------------
+
+    reply = message.reply_to_message
+
+    if reply and reply.photo:
+        return reply
+
+    return None
+
+
+def download_telegram_image(photo_message):
+    """
+    Скачивает фото из Telegram и превращает его
+    в объект PIL.Image.
+    """
+
+    file_id = photo_message.photo[-1].file_id
+
+    file_info = bot.get_file(file_id)
+
+    image_bytes = bot.download_file(
+        file_info.file_path
+    )
+
+    print(
+        f"VEO: downloaded source image "
+        f"{len(image_bytes)} bytes"
+    )
+
+    image = Image.open(
+        io.BytesIO(image_bytes)
+    ).convert("RGB")
+
+    return image
+
+
+def build_veo_prompt(user_prompt, has_image):
+    """
+    Подготавливает промпт для Veo.
+    """
+
+    if has_image:
+
+        return f"""
+Animate the provided image into an 8-second cinematic video.
+
+The provided image is the starting frame.
+Preserve the identity, appearance, clothing,
+objects, environment, composition and overall visual
+style from the source image unless the user's request
+explicitly asks to change them.
+
+The user's request may be written in Russian.
+Understand Russian naturally.
+
+Create natural motion, realistic physics,
+coherent camera movement and consistent characters.
+
+Preserve important details from the source image.
+
+USER REQUEST:
+{user_prompt}
+"""
+
+    return f"""
+Create an 8-second cinematic video exactly according
+to the user's request.
 
 The user's request may be written in Russian.
 Understand Russian naturally.
@@ -863,70 +923,113 @@ Preserve all requested:
 - music
 - timing
 
+Create natural motion and realistic physics.
+
 Do not change the intended meaning.
 Do not add unnecessary characters or objects.
 
 USER REQUEST:
-{prompt}
+{user_prompt}
 """
 
-    print(
-        f"VEO: model={VEO_MODEL}"
+
+def generate_veo_video(
+    prompt,
+    message_id,
+    source_image=None,
+    status_callback=None
+):
+    """
+    Генерирует видео через Veo 3.1 Fast.
+
+    source_image:
+        None -> text-to-video
+        PIL.Image -> image-to-video
+    """
+
+    has_image = source_image is not None
+
+    veo_prompt = build_veo_prompt(
+        prompt,
+        has_image
     )
 
     print(
-        f"VEO: user prompt={prompt}"
+        f"VEO: image input = {has_image}"
+    )
+
+    print(
+        f"VEO: prompt = {prompt}"
     )
 
     # ------------------------------------------------------
-    # Start operation
+    # TEXT -> VIDEO
     # ------------------------------------------------------
 
-    operation = image_client.models.generate_videos(
-        model=VEO_MODEL,
-        prompt=veo_prompt,
-        config=types.GenerateVideosConfig(
-            number_of_videos=1,
-            resolution="720p",
-            aspect_ratio="16:9"
+    if source_image is None:
+
+        operation = image_client.models.generate_videos(
+            model=VEO_MODEL,
+            prompt=veo_prompt,
+            config=types.GenerateVideosConfig(
+                number_of_videos=1,
+                resolution="720p",
+                aspect_ratio="16:9"
+            )
         )
-    )
+
+    # ------------------------------------------------------
+    # IMAGE -> VIDEO
+    # ------------------------------------------------------
+
+    else:
+
+        operation = image_client.models.generate_videos(
+            model=VEO_MODEL,
+            prompt=veo_prompt,
+            image=source_image,
+            config=types.GenerateVideosConfig(
+                number_of_videos=1,
+                resolution="720p",
+                aspect_ratio="16:9"
+            )
+        )
 
     print(
         "VEO: operation created"
     )
 
-    last_status_update = 0
+    # ------------------------------------------------------
+    # WAIT
+    # ------------------------------------------------------
 
-    # ------------------------------------------------------
-    # Poll
-    # ------------------------------------------------------
+    last_status_update = 0
 
     while not operation.done:
 
-        elapsed = int(
-            time.time() - last_status_update
-        )
+        now = time.time()
 
         if (
             status_callback
             and (
                 last_status_update == 0
-                or elapsed >= 30
+                or now - last_status_update >= 30
             )
         ):
 
             try:
+
                 status_callback(
-                    "🎬 Veo 3.1 Fast всё ещё рендерит..."
+                    "🎬 Veo 3.1 Fast рендерит..."
                 )
+
             except Exception:
                 pass
 
-            last_status_update = time.time()
+            last_status_update = now
 
         print(
-            "VEO: waiting for completion..."
+            "VEO: waiting..."
         )
 
         time.sleep(10)
@@ -940,7 +1043,7 @@ USER REQUEST:
     )
 
     # ------------------------------------------------------
-    # Check response
+    # RESULT
     # ------------------------------------------------------
 
     if not operation.response:
@@ -970,11 +1073,11 @@ USER REQUEST:
         )
 
     # ------------------------------------------------------
-    # Download
+    # DOWNLOAD
     # ------------------------------------------------------
 
     print(
-        "VEO: downloading video..."
+        "VEO: downloading..."
     )
 
     image_client.files.download(
@@ -992,16 +1095,13 @@ USER REQUEST:
     )
 
     print(
-        f"VEO: saved {filename}"
+        f"VEO: saved -> {filename}"
     )
 
     return filename
 
 
 def is_temporary_veo_error(exc):
-    """
-    Определяет ошибки, при которых стоит повторить запрос.
-    """
 
     text = str(exc).upper()
 
@@ -1022,28 +1122,106 @@ def is_temporary_veo_error(exc):
 )
 def video_command(message):
 
-    prompt = (
-        message.text
-        .replace("/video", "")
-        .replace("/vid", "")
-        .strip()
+    # ------------------------------------------------------
+    # Получаем текст команды
+    # ------------------------------------------------------
+
+    raw_text = message.text or ""
+
+    prompt = re.sub(
+        r"^/(?:video|vid)(?:@\w+)?\s*",
+        "",
+        raw_text,
+        count=1,
+        flags=re.IGNORECASE
+    ).strip()
+
+    # ------------------------------------------------------
+    # Ищем изображение
+    # ------------------------------------------------------
+
+    source_message = get_video_source_image(
+        message
     )
+
+    # ------------------------------------------------------
+    # Если изображения нет и нет prompt
+    # ------------------------------------------------------
 
     if not prompt:
 
-        bot.reply_to(
-            message,
-            "Напиши, что снять.\n\n"
-            "Например:\n"
-            "/video кот едет на велосипеде по Москве ночью"
-        )
+        if source_message:
+
+            bot.reply_to(
+                message,
+                "Напиши, что сделать с этим изображением.\n\n"
+                "Например:\n"
+                "/video пусть он начинает танцевать"
+            )
+
+        else:
+
+            bot.reply_to(
+                message,
+                "Напиши, что снять.\n\n"
+                "Например:\n"
+                "/video кот едет на велосипеде ночью"
+            )
 
         return
 
+    # ------------------------------------------------------
+    # Скачиваем изображение
+    # ------------------------------------------------------
+
+    source_image = None
+
+    if source_message:
+
+        try:
+
+            source_image = download_telegram_image(
+                source_message
+            )
+
+        except Exception as e:
+
+            print(
+                "VEO IMAGE DOWNLOAD ERROR:",
+                repr(e)
+            )
+
+            bot.reply_to(
+                message,
+                f"Не удалось загрузить изображение:\n{e}"
+            )
+
+            return
+
+    # ------------------------------------------------------
+    # Status
+    # ------------------------------------------------------
+
+    if source_image:
+
+        status_text = (
+            "🎬 Veo 3.1 Fast оживляет изображение..."
+        )
+
+    else:
+
+        status_text = (
+            "🎬 Veo 3.1 Fast рендерит видео..."
+        )
+
     status_msg = bot.reply_to(
         message,
-        "🎬 Veo 3.1 Fast рендерит видео..."
+        status_text
     )
+
+    # ------------------------------------------------------
+    # Status updater
+    # ------------------------------------------------------
 
     def update_status(text):
 
@@ -1058,18 +1236,21 @@ def video_command(message):
         except Exception:
             pass
 
+    # ------------------------------------------------------
+    # Background task
+    # ------------------------------------------------------
+
     def background_video_task():
 
         video_file = None
         last_error = None
 
-        # --------------------------------------------------
-        # Retry Veo
-        # --------------------------------------------------
-
         attempts = 3
 
-        for attempt in range(1, attempts + 1):
+        for attempt in range(
+            1,
+            attempts + 1
+        ):
 
             try:
 
@@ -1079,8 +1260,9 @@ def video_command(message):
                 )
 
                 video_file = generate_veo_video(
-                    prompt,
-                    message.message_id,
+                    prompt=prompt,
+                    message_id=message.message_id,
+                    source_image=source_image,
                     status_callback=update_status
                 )
 
@@ -1096,10 +1278,12 @@ def video_command(message):
                     repr(e)
                 )
 
-                if (
-                    attempt >= attempts
-                    or not is_temporary_veo_error(e)
-                ):
+                # Невременная ошибка
+                if not is_temporary_veo_error(e):
+                    break
+
+                # Последняя попытка
+                if attempt >= attempts:
                     break
 
                 delay = min(
@@ -1112,12 +1296,12 @@ def video_command(message):
                     f"Повтор через {delay} сек..."
                 )
 
-                sleep_with_log(
+                time.sleep(
                     delay
                 )
 
         # --------------------------------------------------
-        # Success
+        # SUCCESS
         # --------------------------------------------------
 
         if video_file:
@@ -1127,21 +1311,24 @@ def video_command(message):
                 if not os.path.exists(
                     video_file
                 ):
+
                     raise RuntimeError(
-                        "Файл видео не найден."
+                        "Созданный видеофайл не найден."
                     )
 
-                print(
-                    "VIDEO: sending to Telegram..."
-                )
-
                 try:
+
                     bot.delete_message(
                         message.chat.id,
                         status_msg.message_id
                     )
+
                 except Exception:
                     pass
+
+                print(
+                    "VEO: sending video..."
+                )
 
                 with open(
                     video_file,
@@ -1156,20 +1343,20 @@ def video_command(message):
                     )
 
                 print(
-                    "VIDEO: sent successfully"
+                    "VEO: video sent"
                 )
 
             except Exception as e:
 
                 print(
-                    "VIDEO TELEGRAM ERROR:",
+                    "VEO TELEGRAM ERROR:",
                     repr(e)
                 )
 
                 try:
 
                     bot.edit_message_text(
-                        f"Видео создано, но Telegram не смог его отправить:\n{e}",
+                        f"Видео создано, но не отправлено:\n{e}",
                         message.chat.id,
                         status_msg.message_id
                     )
@@ -1178,12 +1365,11 @@ def video_command(message):
 
                     bot.send_message(
                         message.chat.id,
-                        f"Видео создано, но отправка не удалась:\n{e}"
+                        f"Видео создано, но не отправлено:\n{e}"
                     )
 
             finally:
 
-                # Удаляем mp4 после отправки
                 if (
                     video_file
                     and os.path.exists(video_file)
@@ -1196,20 +1382,20 @@ def video_command(message):
                         )
 
                         print(
-                            "VIDEO: temp file removed"
+                            "VEO: temp file removed"
                         )
 
                     except Exception as e:
 
                         print(
-                            "VIDEO CLEANUP ERROR:",
+                            "VEO CLEANUP ERROR:",
                             repr(e)
                         )
 
             return
 
         # --------------------------------------------------
-        # Error
+        # FAILURE
         # --------------------------------------------------
 
         error_text = (
@@ -1237,8 +1423,9 @@ def video_command(message):
                 error_text
             )
 
-    # Важно: генерация идёт в отдельном потоке
-    # и не блокирует Telegram polling.
+    # ------------------------------------------------------
+    # Start background generation
+    # ------------------------------------------------------
 
     threading.Thread(
         target=background_video_task,
