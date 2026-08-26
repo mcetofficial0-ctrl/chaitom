@@ -5,7 +5,6 @@ import random
 import time
 import io
 import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
@@ -51,28 +50,6 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши строго обычным текстом."""
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
-
-# ================= НОВЫЙ ЧИТОМ: ГЕНЕРАЦИЯ ИИ-КАРТИНОК =================
-def generate_ai_image(prompt_text):
-    """Генерирует настоящую ИИ-картинку через бесплатное API Pollinations"""
-    try:
-        # Добавляем случайный seed, чтобы каждый раз картинка была уникальной
-        seed = random.randint(1, 1000000)
-        # Кодируем текст, чтобы URL не сломался от пробелов и русских букв
-        safe_prompt = urllib.parse.quote(prompt_text)
-        
-        # Секретная ссылка для генерации шедевров (размер 1024x1024)
-        url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
-        
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            image_data = response.read()
-            
-        return image_data
-    except Exception as e:
-        print(f"Ошибка ИИ-генерации: {e}")
-        return None
-# ======================================================================
 
 def draw_text_with_outline(draw, text, position, font, text_color="white", outline_color="black"):
     x, y = position
@@ -184,27 +161,29 @@ def generate_meme_image(top_text, bottom_text):
 def send_welcome(message):
     bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля, /make_meme — мем, /edit [текст] — фотошоп.")
 
-# ================= КОМАНДА /draw ДЛЯ ИИ-ГЕНЕРАЦИИ =================
+# ================= КОМАНДА /draw С ФИНАЛЬНЫМ ЧИТОМОМ =================
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
     prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать, епта! Например: /draw калашников кбунгир")
+        bot.reply_to(message, "Напиши, что нарисовать, епта! Например: /draw большой бургер")
         return
 
-    status_msg = bot.reply_to(message, "Отправляю запрос нейросети... Рисую шедевр!")
-
+    # Динамический seed для уникальности картинок
+    seed = random.randint(1, 1000000)
+    # Кодируем промпт для URL
+    safe_prompt = urllib.parse.quote(prompt)
+    
+    # ФИНАЛЬНЫЙ ЧИТОМ: Бот не скачивает картинку, а отправляет динамическую ссылку.
+    # Telegram сам скачает её с Pollinations и покажет в чате.
+    final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
+    
     try:
-        # Скачиваем сгенерированную картинку
-        image_bytes = generate_ai_image(prompt)
-        
-        if image_bytes:
-            bot.send_photo(message.chat.id, image_bytes, reply_to_message_id=message.message_id)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        else:
-            bot.edit_message_text("Мой астральный мольберт сломался. Попробуй еще раз.", message.chat.id, status_msg.message_id)
+        # Отправляем фото по URL напрямую. Render больше не нужен для скачивания.
+        bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
     except Exception as e:
-        bot.edit_message_text(f"Системная ошибка рисования: {e}", message.chat.id, status_msg.message_id)
+        print(f"Ошибка отправки ИИ-ссылки: {e}")
+        bot.reply_to(message, "Даже астральная ссылка сломалась. Сегодня не деньPollinations. Попробуй позже.")
 # ======================================================================
 
 @bot.message_handler(commands=['edit'])
@@ -330,7 +309,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with AI Generation is running!')
+        self.wfile.write(b'Bot with ultimate AI link is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
