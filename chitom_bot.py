@@ -19,7 +19,6 @@ genai.configure(api_key=GEMINI_API_KEY)
 TEMPLATE_NAME = 'template.jpg'
 FONT_NAME = 'arial.ttf'       
 RESULT_NAME = 'meme_result.jpg'
-EDITED_NAME = 'edited_result.jpg'
 
 # Обязательно замените на юзернейм вашего бота
 BOT_USERNAME = '@chaitom_bot' 
@@ -59,7 +58,7 @@ def draw_text_with_outline(draw, text, position, font, text_color="white", outli
     draw.text((x, y), text, font=font, fill=text_color)
 
 def edit_user_image(image_bytes, user_prompt):
-    """Реально изменяет картинку на основе текстового промпта пользователя"""
+    """Изменяет картинку и возвращает её прямо в оперативную память (BytesIO)"""
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img)
@@ -67,21 +66,18 @@ def edit_user_image(image_bytes, user_prompt):
         
         prompt_lower = user_prompt.lower()
         
-        # Определяем, какой текст нанести на основе промпта
         text_to_draw = "CHITOM"
         if "chitom" in prompt_lower:
             text_to_draw = "CHITOM"
         elif "читос" in prompt_lower:
             text_to_draw = "ЧИТОС"
         elif "root beer" in prompt_lower:
-            text_to_draw = "CHITOM" # Заменяем по запросу пользователя
+            text_to_draw = "CHITOM"
         elif user_prompt.strip():
-            # Если ввели кастомный текст, попробуем использовать его часть
             words = user_prompt.split()
             if len(words) > 1:
                 text_to_draw = " ".join(words[1:4]).upper()
 
-        # Применяем фильтр или накладываем текст в зависимости от промпта
         if "invert" in prompt_lower or "инверт" in prompt_lower:
             img = ImageOps.invert(img)
         elif "bw" in prompt_lower or "чб" in prompt_lower:
@@ -89,19 +85,20 @@ def edit_user_image(image_bytes, user_prompt):
         elif "flip" in prompt_lower or "перевер" in prompt_lower:
             img = img.rotate(180)
 
-        # Накладываем надпись на картинку (эффект правки банке/объекту)
         try:
             font = ImageFont.truetype(FONT_NAME, int(height / 12))
         except:
             font = ImageFont.load_default()
 
-        # Рисуем текст в заметном месте (по центру или чуть выше)
         x = width // 6
         y = height // 3
         draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
 
-        img.save(EDITED_NAME)
-        return EDITED_NAME
+        # Сохраняем в оперативную память вместо диска
+        bio = io.BytesIO()
+        img.save(bio, format='JPEG')
+        bio.seek(0)
+        return bio
     except Exception as e:
         print(f"Ошибка изменения картинки: {e}")
         return None
@@ -177,8 +174,8 @@ def edit_command(message):
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # 1. Изменяем картинку программно
-        edited_file = edit_user_image(downloaded_file, user_prompt)
+        # 1. Изменяем картинку в памяти (возвращает BytesIO)
+        photo_bio = edit_user_image(downloaded_file, user_prompt)
         
         # 2. Генерируем текст от Gemini
         response = model.generate_content([
@@ -187,15 +184,13 @@ def edit_command(message):
         ])
         comment_text = response.text.replace('*', '')
 
-        if edited_file:
-            # СНАЧАЛА отправляем саму картинку чистой
-            with open(edited_file, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, reply_to_message_id=target_message.message_id)
+        if photo_bio:
+            # СНАЧАЛА отправляем измененную картинку прямо из памяти
+            bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
             
-            # СРАЗУ ПОСЛЕ НЕЕ отправляем текстом весь лор, чтобы Telegram ничего не обрезал
+            # СРАЗУ ПОСЛЕ НЕЕ отправляем текстом весь лор
             bot.send_message(message.chat.id, comment_text, reply_to_message_id=target_message.message_id)
             
-            os.remove(edited_file)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
             bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
@@ -299,7 +294,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with Image editing prompt is running!')
+        self.wfile.write(b'Bot with memory stream is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
