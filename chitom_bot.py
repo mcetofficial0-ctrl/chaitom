@@ -394,11 +394,145 @@ def video_command(message):
     threading.Thread(target=background_video_task, daemon=True).start()
 # --------------------------------------------------
 
-# ================= DRAW — NANO BANANA PRO =================
+# ================= DRAW — NANO BANANA PRO + FALLBACK =================
+
+DRAW_MODELS = [
+    {
+        "name": "gemini-3-pro-image",
+        "label": "Nano Banana Pro",
+        "attempts": 3,
+    },
+    {
+        "name": "gemini-3.1-flash-image",
+        "label": "Nano Banana 2",
+        "attempts": 2,
+    },
+]
+
+
+def is_temporary_gemini_error(exc):
+    """
+    Определяет временные ошибки Gemini:
+    429 — слишком много запросов
+    503 — сервис временно перегружен
+    """
+    text = str(exc).upper()
+
+    return (
+        "429" in text
+        or "RESOURCE_EXHAUSTED" in text
+        or "503" in text
+        or "UNAVAILABLE" in text
+        or "HIGH DEMAND" in text
+        or "OVERLOADED" in text
+        or "SERVICE UNAVAILABLE" in text
+    )
+
+
+def extract_image_bytes(response):
+    """
+    Извлекает байты изображения из ответа Gemini.
+
+    Поддерживает несколько вариантов структуры ответа,
+    чтобы код не ломался из-за различий версий SDK.
+    """
+
+    # Вариант 1 — response.parts
+    parts = getattr(response, "parts", None)
+
+    if parts:
+        for part in parts:
+            inline_data = getattr(part, "inline_data", None)
+
+            if inline_data is not None:
+                data = getattr(inline_data, "data", None)
+
+                if data:
+                    if isinstance(data, str):
+                        try:
+                            return base64.b64decode(data)
+                        except Exception:
+                            return data.encode("utf-8")
+
+                    return data
+
+    # Вариант 2 — response.candidates[*].content.parts
+    candidates = getattr(response, "candidates", None)
+
+    if candidates:
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+
+            if not content:
+                continue
+
+            parts = getattr(content, "parts", None)
+
+            if not parts:
+                continue
+
+            for part in parts:
+                inline_data = getattr(part, "inline_data", None)
+
+                if inline_data is not None:
+                    data = getattr(inline_data, "data", None)
+
+                    if data:
+                        if isinstance(data, str):
+                            try:
+                                return base64.b64decode(data)
+                            except Exception:
+                                return data.encode("utf-8")
+
+                        return data
+
+    return None
+
+
+def generate_draw_image(model_name, prompt):
+    """
+    Один запрос к указанной image-модели.
+    """
+
+    response = image_client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"]
+        )
+    )
+
+    image_bytes = extract_image_bytes(response)
+
+    if not image_bytes:
+        # Пытаемся вывести текст ответа для диагностики
+        response_text = ""
+
+        try:
+            response_text = getattr(response, "text", "") or ""
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "Модель не вернула изображение."
+            + (
+                f" Ответ модели: {response_text[:500]}"
+                if response_text
+                else ""
+            )
+        )
+
+    return image_bytes
+
 
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
-    prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
+    prompt = (
+        message.text
+        .replace('/draw', '')
+        .replace('/gen', '')
+        .strip()
+    )
 
     if not prompt:
         bot.reply_to(
@@ -412,81 +546,96 @@ def draw_command(message):
         "🍌 Nano Banana Pro рисует..."
     )
 
-    try:
-        response = image_client.models.generate_content(
-            model="gemini-3-pro-image",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"]
-            )
-        )
+    last_error = None
+    generated_image = None
+    successful_model = None
 
-        image = None
+    # Пробуем модели по очереди
+    for model_info in DRAW_MODELS:
 
-        for part in response.parts:
-            if part.inline_data is not None:
-                image = part.as_image()
+        model_name = model_info["name"]
+        model_label = model_info["label"]
+        attempts = model_info["attempts"]
+
+        for attempt in range(1, attempts + 1):
+
+            try:
+                print(
+                    f"DRAW: {model_label} "
+                    f"({model_name}) "
+                    f"attempt {attempt}/{attempts}"
+                )
+
+                generated_image = generate_draw_image(
+                    model_name,
+                    prompt
+                )
+
+                successful_model = model_label
+
+                print(
+                    f"DRAW: успешно — {model_label}"
+                )
+
                 break
 
-        if image is None:
-            raise RuntimeError(
-                f"Модель не вернула изображение. Ответ: {response}"
-            )
+            except Exception as e:
+                last_error = e
 
-        output = io.BytesIO()
-        image.save(output, format="PNG")
-        output.seek(0)
-        output.name = "generated.png"
-
-        try:
-            bot.delete_message(
-                message.chat.id,
-                status_msg.message_id
-            )
-        except Exception:
-            pass
-
-        bot.send_photo(
-            chat_id=message.chat.id,
-            photo=output,
-            reply_to_message_id=message.message_id
-        )
-
-        print("DRAW: Nano Banana Pro OK")
-
-    except Exception as pro_error:
-        print("DRAW PRO ERROR:", repr(pro_error))
-
-        # FALLBACK — Nano Banana 2
-        try:
-            bot.edit_message_text(
-                "🍌 Pro не ответил, переключаюсь на Nano Banana 2...",
-                message.chat.id,
-                status_msg.message_id
-            )
-
-            response = image_client.models.generate_content(
-                model="gemini-3.1-flash-image",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"]
+                print(
+                    f"DRAW ERROR: {model_label}, "
+                    f"attempt {attempt}/{attempts}: "
+                    f"{repr(e)}"
                 )
-            )
 
-            image = None
-
-            for part in response.parts:
-                if part.inline_data is not None:
-                    image = part.as_image()
+                # Постоянная ошибка — сразу переходим
+                # к следующей модели
+                if not is_temporary_gemini_error(e):
+                    print(
+                        f"DRAW: ошибка не временная, "
+                        f"перехожу на следующую модель."
+                    )
                     break
 
-            if image is None:
-                raise RuntimeError(
-                    f"Nano Banana 2 не вернула изображение. Ответ: {response}"
-                )
+                # Если остались попытки — ждём
+                if attempt < attempts:
 
-            output = io.BytesIO()
-            image.save(output, format="PNG")
+                    delay = min(
+                        2 ** attempt,
+                        10
+                    )
+
+                    print(
+                        f"DRAW: временная ошибка, "
+                        f"повтор через {delay} сек."
+                    )
+
+                    time.sleep(delay)
+
+        # Если картинка получена — прекращаем перебор моделей
+        if generated_image:
+            break
+
+        # Обновляем статус перед fallback
+        if model_name != DRAW_MODELS[-1]["name"]:
+
+            try:
+                bot.edit_message_text(
+                    "🍌 Pro занят, переключаюсь на запасной Nano Banana 2...",
+                    message.chat.id,
+                    status_msg.message_id
+                )
+            except Exception:
+                pass
+
+    # ---------------------------------------------------------
+    # Если изображение получено
+    # ---------------------------------------------------------
+
+    if generated_image:
+
+        try:
+            output = io.BytesIO(generated_image)
             output.seek(0)
             output.name = "generated.png"
 
@@ -504,25 +653,57 @@ def draw_command(message):
                 reply_to_message_id=message.message_id
             )
 
-            print("DRAW: Nano Banana 2 OK")
+            print(
+                f"DRAW: изображение отправлено "
+                f"через {successful_model}"
+            )
 
-        except Exception as fallback_error:
-            print("DRAW FALLBACK ERROR:", repr(fallback_error))
+        except Exception as e:
+            print(
+                "DRAW TELEGRAM ERROR:",
+                repr(e)
+            )
 
             try:
                 bot.edit_message_text(
-                    f"Ошибка генерации:\n{fallback_error}",
+                    f"Изображение создано, но Telegram не смог его отправить:\n{e}",
                     message.chat.id,
                     status_msg.message_id
                 )
             except Exception:
-                bot.send_message(
-                    message.chat.id,
-                    f"Ошибка генерации:\n{fallback_error}"
-                )
+                pass
 
-# ==========================================================
+        return
 
+    # ---------------------------------------------------------
+    # Все модели провалились
+    # ---------------------------------------------------------
+
+    error_text = (
+        "Не удалось сгенерировать изображение."
+    )
+
+    if last_error:
+        error_text += f"\n\nПоследняя ошибка:\n{last_error}"
+
+    print(
+        "DRAW FINAL ERROR:",
+        repr(last_error)
+    )
+
+    try:
+        bot.edit_message_text(
+            error_text,
+            message.chat.id,
+            status_msg.message_id
+        )
+    except Exception:
+        bot.send_message(
+            message.chat.id,
+            error_text
+        )
+
+# ==============================================================
 # ================= РЕДАКТИРОВАНИЕ КАРТИНОК =================
 def is_edit_message(message):
     text = (message.text or message.caption or "").strip()
