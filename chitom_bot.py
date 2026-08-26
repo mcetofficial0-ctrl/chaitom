@@ -414,32 +414,25 @@ def draw_command(message):
 
     try:
         response = image_client.models.generate_content(
-            model="gemini-3-pro-image-preview",
+            model="gemini-3-pro-image",
             contents=prompt,
             config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"]
+                response_modalities=["TEXT", "IMAGE"]
             )
         )
 
         image = None
 
-        # Получаем картинку из ответа
-        for part in (response.parts or []):
-            if getattr(part, "inline_data", None):
-                try:
-                    image = part.as_image()
-                except Exception:
-                    image = None
-
-                if image is not None:
-                    break
+        for part in response.parts:
+            if part.inline_data is not None:
+                image = part.as_image()
+                break
 
         if image is None:
             raise RuntimeError(
-                "Gemini не вернул изображение."
+                f"Модель не вернула изображение. Ответ: {response}"
             )
 
-        # Сохраняем PNG в памяти
         output = io.BytesIO()
         image.save(output, format="PNG")
         output.seek(0)
@@ -461,10 +454,10 @@ def draw_command(message):
 
         print("DRAW: Nano Banana Pro OK")
 
-    except Exception as e:
-        print("DRAW PRO ERROR:", repr(e))
+    except Exception as pro_error:
+        print("DRAW PRO ERROR:", repr(pro_error))
 
-        # ---------- FALLBACK ----------
+        # FALLBACK — Nano Banana 2
         try:
             bot.edit_message_text(
                 "🍌 Pro не ответил, переключаюсь на Nano Banana 2...",
@@ -476,25 +469,20 @@ def draw_command(message):
                 model="gemini-3.1-flash-image",
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"]
+                    response_modalities=["TEXT", "IMAGE"]
                 )
             )
 
             image = None
 
-            for part in (response.parts or []):
-                if getattr(part, "inline_data", None):
-                    try:
-                        image = part.as_image()
-                    except Exception:
-                        image = None
-
-                    if image is not None:
-                        break
+            for part in response.parts:
+                if part.inline_data is not None:
+                    image = part.as_image()
+                    break
 
             if image is None:
                 raise RuntimeError(
-                    "Nano Banana 2 тоже не вернула изображение."
+                    f"Nano Banana 2 не вернула изображение. Ответ: {response}"
                 )
 
             output = io.BytesIO()
@@ -516,7 +504,7 @@ def draw_command(message):
                 reply_to_message_id=message.message_id
             )
 
-            print("DRAW: Nano Banana 2 FALLBACK OK")
+            print("DRAW: Nano Banana 2 OK")
 
         except Exception as fallback_error:
             print("DRAW FALLBACK ERROR:", repr(fallback_error))
