@@ -50,22 +50,6 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши строго обычным текстом."""
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
-image_generation_model = genai.ImageGenerationModel("imagen-3.0-generate-002")
-
-def generate_ai_image(prompt_text):
-    try:
-        result = image_generation_model.generate_images(
-            prompt=prompt_text,
-            number_of_images=1,
-            aspect_ratio="1:1",
-            safety_filter_level="allow_all",
-            person_generation="allow_adult"
-        )
-        for generated_image in result.images:
-            return generated_image._image_bytes
-    except Exception as e:
-        print(f"Ошибка генерации картинки Imagen: {e}")
-        return None
 
 def edit_user_image(image_bytes, effect_name):
     try:
@@ -165,25 +149,7 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи! Умею генерировать арты (/draw), делать мемы (/make_meme) и изменять присланные картинки (/edit).")
-
-@bot.message_handler(commands=['draw', 'gen'])
-def draw_command(message):
-    query = message.text.replace('/draw', '').replace('/gen', '').strip()
-    if not query:
-        bot.reply_to(message, "Напиши, что нарисовать! Пример: /draw кот ест читос")
-        return
-
-    status_msg = bot.reply_to(message, "Включаю нейросети, рисую шедевр...")
-    try:
-        image_bytes = generate_ai_image(query)
-        if image_bytes:
-            bot.send_photo(message.chat.id, image_bytes, reply_to_message_id=message.message_id)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        else:
-            bot.edit_message_text("Ой, моя бастурма подгорела. Не удалось сгенерировать картинку.", message.chat.id, status_msg.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"Ошибка генерации: {e}", message.chat.id, status_msg.message_id)
+    bot.reply_to(message, "Я на связи! Умею делать мемы (/make_meme), изменять присланные картинки (/edit) и общаться с учетом контекста.")
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
@@ -309,7 +275,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with Image Editing is running!')
+        self.wfile.write(b'Bot is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -319,5 +285,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот с редактированием картинок запущен...")
+    print("Читом бот успешно запущен...")
     bot.infinity_polling()
