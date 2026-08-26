@@ -12,6 +12,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from google import genai as new_genai
+from google.genai import types
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -85,61 +86,46 @@ def get_aspect_ratio(width, height):
 
 
 def edit_user_image(image_bytes, user_prompt):
-    """Настоящее image-to-image редактирование через Gemini Image."""
+    """Редактирует исходное изображение напрямую через Gemini Image."""
     original = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    width, height = original.size
-    aspect_ratio = get_aspect_ratio(width, height)
 
+    # Передаём исходную картинку + текстовый промпт непосредственно
+    # image-модели. Не превращаем картинку в описание и не генерируем
+    # новую картинку с нуля.
     edit_prompt = f"""
-Edit the provided image according to the user's instruction.
-
-USER INSTRUCTION:
+Edit the provided image directly according to this instruction:
 {user_prompt}
 
-Preserve the original subject, composition, camera angle, lighting,
-background and all details that the user did not ask to change.
-Make the requested modification directly to the provided image.
-Return the edited image, not a description of it.
+Keep the original image, subject identity, composition, perspective,
+lighting, background and details unless the instruction explicitly asks
+to change them. Only make the requested edits.
+Return the edited image itself. Do not return a description or instructions.
 """
 
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    interaction = image_client.interactions.create(
+    response = image_client.models.generate_content(
         model="gemini-3.1-flash-image",
-        input=[
-            {
-                "type": "image",
-                "data": image_b64,
-                "mime_type": "image/jpeg",
-            },
-            {
-                "type": "text",
-                "text": edit_prompt,
-            },
+        contents=[
+            edit_prompt,
+            original,
         ],
-        response_format={
-            "type": "image",
-            "mime_type": "image/jpeg",
-            "aspect_ratio": aspect_ratio,
-        },
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"]
+        )
     )
 
-    output_image = getattr(interaction, "output_image", None)
-    if output_image and getattr(output_image, "data", None):
-        result = io.BytesIO(base64.b64decode(output_image.data))
-        result.name = "edited.jpg"
-        result.seek(0)
-        return result
+    # Ищем именно image-part в ответе.
+    for part in response.parts:
+        if getattr(part, "inline_data", None) is not None:
+            image = part.as_image()
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+            output.seek(0)
+            output.name = "edited.png"
+            return output
 
-    for step in getattr(interaction, "steps", []) or []:
-        for block in getattr(step, "content", []) or []:
-            if getattr(block, "type", None) == "image" and getattr(block, "data", None):
-                result = io.BytesIO(base64.b64decode(block.data))
-                result.name = "edited.jpg"
-                result.seek(0)
-                return result
-
-    raise RuntimeError("Gemini не вернул изменённое изображение.")
+    raise RuntimeError(
+        "Gemini не вернул изображение. Проверь модель и API-ключ."
+    )
 
 def text_wrap(text, font, max_width):
     lines = []
@@ -296,20 +282,29 @@ def draw_command(message):
         bot.edit_message_text("Все мольберты сгорели нахрен. Попробуй позже.", message.chat.id, status_msg.message_id)
 # ==========================================================
 
-# ================= РЕДАКТИРОВАНИЕ КАРТИНОК ЧЕРЕЗ NANO BANANA =================
+# ================= РЕДАКТИРОВАНИЕ КАРТИНОК =================
+def is_edit_message(message):
+    text = (message.text or message.caption or "").strip()
+    return bool(re.match(r"^/edit(?:@\w+)?(?:\s|$)", text, re.IGNORECASE))
+
+
 @bot.message_handler(
-    commands=['edit'],
-    content_types=['text', 'photo']
+    func=is_edit_message,
+    content_types=["text", "photo"]
 )
 def edit_command(message):
-    # Вариант 1: фото прикреплено прямо к /edit.
-    # Вариант 2: /edit отправлен reply на уже существующее фото.
+    print("========== /EDIT ==========")
+    print("TEXT:", repr(message.text))
+    print("CAPTION:", repr(message.caption))
+
+    # 1) Фото прикреплено прямо к сообщению /edit.
+    # 2) Либо /edit отправлен reply на существующую фотографию.
     target_message = message if message.photo else message.reply_to_message
 
     if not target_message or not target_message.photo:
         bot.reply_to(
             message,
-            "Прикрепи изображение к /edit или сделай reply на фото.\n\n"
+            "Прикрепи изображение к сообщению с /edit или сделай reply на фото.\n\n"
             "Пример:\n"
             "/edit сделай из него киборга"
         )
@@ -329,20 +324,20 @@ def edit_command(message):
     if not user_prompt:
         bot.reply_to(
             message,
-            "Напиши промпт для редактирования.\n"
-            "Например: /edit добавь ему очки"
+            "Напиши промпт для изменения картинки.\n"
+            "Например: /edit добавь ему солнечные очки"
         )
         return
 
-    status = bot.reply_to(
-        message,
-        "Редактирую изображение..."
-    )
+    status = bot.reply_to(message, "Редактирую изображение...")
 
     try:
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         image_bytes = bot.download_file(file_info.file_path)
+
+        print("EDIT: downloaded", len(image_bytes), "bytes")
+        print("EDIT PROMPT:", user_prompt)
 
         edited_photo = edit_user_image(
             image_bytes,
@@ -350,6 +345,8 @@ def edit_command(message):
         )
         edited_photo.seek(0)
 
+        # Сначала удаляем статус, затем отдельным сообщением отправляем
+        # ТОЛЬКО готовое изображение.
         try:
             bot.delete_message(
                 message.chat.id,
@@ -358,14 +355,14 @@ def edit_command(message):
         except Exception:
             pass
 
-        # ОТПРАВЛЯЕМ ИМЕННО ИЗМЕНЁННУЮ КАРТИНКУ.
-        bot.send_photo(
+        bot.send_document(
             chat_id=message.chat.id,
-            photo=edited_photo,
+            document=edited_photo,
+            visible_file_name="edited.png",
             reply_to_message_id=message.message_id
         )
 
-        print("EDIT: изменённая картинка отправлена")
+        print("EDIT: EDITED FILE SENT")
 
     except Exception as e:
         print("EDIT ERROR:", repr(e))
@@ -380,6 +377,7 @@ def edit_command(message):
                 message.chat.id,
                 f"Ошибка редактирования: {e}"
             )
+
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -411,6 +409,9 @@ def make_meme_command(message):
 
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'audio'])
 def handle_message(message):
+    if is_edit_message(message):
+        return
+
     # /edit уже обработан отдельным обработчиком.
     incoming_text = (message.text or message.caption or "").strip()
     if incoming_text.lower().startswith("/edit"):
