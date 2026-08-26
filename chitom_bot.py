@@ -6,26 +6,15 @@ import io
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
-from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
-from telebot.types import BotCommand
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-genai.configure(api_key=GEMINI_API_KEY)
 
-# Инициализируем DALL-E 3 клиента
-openai_client = None
-if OPENAI_API_KEY:
-    try:
-        openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    except Exception as e:
-        print(f"Ошибка подключения OpenAI: {e}")
+genai.configure(api_key=GEMINI_API_KEY)
 
 TEMPLATE_NAME = 'template.jpg'
 FONT_NAME = 'arial.ttf'       
@@ -170,41 +159,44 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи. Элитный ИИ к твоим услугам.")
+    bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля, /make_meme — мем, /edit [текст] — фотошоп.")
 
-# ================= ПУТЬ МАЖОРА: DALL-E 3 =================
+# ================= NANO BANANA 2 (IMAGEN) =================
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
     prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать. Например: /draw золотой бургер с бриллиантами")
+        bot.reply_to(message, "Напиши, что нарисовать, епта. Например: /draw бастурма")
         return
 
-    if not openai_client:
-        bot.reply_to(message, "Эй, мажор! Ты забыл прописать OPENAI_API_KEY в настройках Render!")
-        return
-
-    status_msg = bot.reply_to(message, "Распаковываю элитные краски DALL-E 3. Рисую дорого и богато...")
+    status_msg = bot.reply_to(message, "Подключаю движок Nano Banana 2...")
 
     try:
-        # Дергаем самую умную модель в мире
-        response = openai_client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-        # Получаем готовую ссылку на шедевр
-        image_url = response.data[0].url
-        
-        bot.send_photo(message.chat.id, image_url, reply_to_message_id=message.message_id)
-        bot.delete_message(message.chat.id, status_msg.message_id)
-            
+        # Попытка №1: Официальный Google Imagen (Nano Banana 2)
+        if hasattr(genai, 'ImageGenerationModel'):
+            imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
+            result = imagen.generate_images(
+                prompt=prompt,
+                number_of_images=1,
+                aspect_ratio="1:1"
+            )
+            image_data = result.images[0]._image_bytes
+            bot.send_photo(message.chat.id, image_data, reply_to_message_id=message.message_id)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+            return
     except Exception as e:
-        print(f"Ошибка Мажорного API: {e}")
-        bot.edit_message_text(f"Буржуйский мольберт сломался: {e}", message.chat.id, status_msg.message_id)
-# =========================================================
+        print(f"Nano Banana 2 отдыхает: {e}. Перехожу на запасной мольберт.")
+
+    # Попытка №2: Безотказный резервный канал, если Google ругается на промпт
+    try:
+        seed = random.randint(1, 1000000)
+        safe_prompt = urllib.parse.quote(prompt)
+        final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
+        bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
+        bot.delete_message(message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text("Все мольберты сгорели нахрен. Попробуй позже.", message.chat.id, status_msg.message_id)
+# ==========================================================
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
@@ -328,7 +320,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'VIP DALL-E 3 Bot is running!')
+        self.wfile.write(b'Bot with Nano Banana 2 is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -338,17 +330,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Настраиваем меню команд...")
-    try:
-        # Бот сам прописывает себе меню при запуске
-        bot.set_my_commands([
-            BotCommand("start", "Перезапустить читом-бота"),
-            BotCommand("draw", "DALL-E 3: Нарисовать элитный шедевр"),
-            BotCommand("edit", "Изменить присланную картинку"),
-            BotCommand("make_meme", "Сделать мем из истории чата")
-        ])
-    except Exception as e:
-        print(f"Не удалось установить команды: {e}")
-        
-    print("Читом бот запущен (режим ПУТЬ МАЖОРА - DALL-E 3)...")
+    print("Читом бот запущен (режим Nano Banana)...")
     bot.infinity_polling()
