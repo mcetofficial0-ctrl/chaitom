@@ -58,7 +58,7 @@ def draw_text_with_outline(draw, text, position, font, text_color="white", outli
     draw.text((x, y), text, font=font, fill=text_color)
 
 def edit_user_image(image_bytes, user_prompt):
-    """Изменяет картинку и возвращает её в память с правильным именем файла"""
+    """Изменяет картинку (накладывает текст из промпта или фильтр) и возвращает в память"""
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img)
@@ -66,6 +66,7 @@ def edit_user_image(image_bytes, user_prompt):
         
         prompt_lower = user_prompt.lower()
         
+        # Что именно написать на картинке на основе вашего запроса
         text_to_draw = "CHITOM"
         if "chitom" in prompt_lower:
             text_to_draw = "CHITOM"
@@ -86,11 +87,12 @@ def edit_user_image(image_bytes, user_prompt):
             img = img.rotate(180)
 
         try:
-            font = ImageFont.truetype(FONT_NAME, int(height / 12))
+            font = ImageFont.truetype(FONT_NAME, int(height / 10))
         except:
             font = ImageFont.load_default()
 
-        x = width // 6
+        # Рисуем текст ближе к центру картинки, чтобы он был заметен
+        x = width // 4
         y = height // 3
         draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
 
@@ -156,14 +158,14 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи! /make_meme — сделать мем, /edit [текст] — изменить присланную картинку.")
+    bot.reply_to(message, "Я на связи! /make_meme — сделать мем, /edit [текст] — изменить картинку.")
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
     target_message = message.reply_to_message if message.reply_to_message else message
     
     if not target_message.photo:
-        bot.reply_to(message, "Сделай реплай на картинку с командой /edit и напиши промпт (например: /edit замени симбу на бургер)")
+        bot.reply_to(message, "Сделай реплай на картинку с командой /edit и напиши промпт (например: /edit бургер)")
         return
 
     user_prompt = message.text.replace('/edit', '').strip()
@@ -174,11 +176,10 @@ def edit_command(message):
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # Изменяем картинку в памяти
         photo_bio = edit_user_image(downloaded_file, user_prompt)
 
         if photo_bio:
-            # Отправляем ТОЛЬКО измененную картинку без всяких текстов
+            # Отправляем ТОЛЬКО картинку, никакого текста
             bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
