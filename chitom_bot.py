@@ -7,6 +7,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # Получаем ключи из переменных окружения
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+# Замените на реальный юзернейм вашего бота (с собачкой в начале)
+BOT_USERNAME = '@chaitom_bot'
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
@@ -24,12 +26,29 @@ def send_welcome(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
+    # Если сообщение пришло из группы или супергруппы
+    if message.chat.type in ['group', 'supergroup']:
+        # 1. Проверяем, упомянули ли бота в тексте
+        is_mentioned = message.text and BOT_USERNAME in message.text
+        
+        # 2. Проверяем, ответили ли на сообщение самого бота (реплай)
+        is_reply = False
+        if message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id:
+            is_reply = True
+            
+        # Если бота не упоминали и ему не отвечали — просто игнорируем сообщение
+        if not (is_mentioned or is_reply):
+            return
+
+    # Если мы дошли сюда, значит нужно отвечать!
     try:
         full_prompt = f"{SYSTEM_PROMPT}\n\nСообщение пользователя: {message.text}"
         response = model.generate_content(full_prompt)
-        # Вырезаем любые звездочки из ответа нейросети перед отправкой
+        
+        # Вырезаем звездочки
         clean_reply = response.text.replace('*', '')
         bot.reply_to(message, clean_reply)
+        
     except Exception as e:
         bot.reply_to(message, f"Ой, мой клубок запутался, а бастурма упала. Ошибка: {e}")
 
