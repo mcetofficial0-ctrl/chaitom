@@ -3,3 +3,4 @@ numpy
 pyTelegramBotAPI
 google-generativeai>=0.7.2
 pillow
+openai
