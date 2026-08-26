@@ -4,6 +4,8 @@ import threading
 import random
 import time
 import io
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
@@ -50,6 +52,28 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
 
+# ================= НОВЫЙ ЧИТОМ: ГЕНЕРАЦИЯ ИИ-КАРТИНОК =================
+def generate_ai_image(prompt_text):
+    """Генерирует настоящую ИИ-картинку через бесплатное API Pollinations"""
+    try:
+        # Добавляем случайный seed, чтобы каждый раз картинка была уникальной
+        seed = random.randint(1, 1000000)
+        # Кодируем текст, чтобы URL не сломался от пробелов и русских букв
+        safe_prompt = urllib.parse.quote(prompt_text)
+        
+        # Секретная ссылка для генерации шедевров (размер 1024x1024)
+        url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
+        
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            image_data = response.read()
+            
+        return image_data
+    except Exception as e:
+        print(f"Ошибка ИИ-генерации: {e}")
+        return None
+# ======================================================================
+
 def draw_text_with_outline(draw, text, position, font, text_color="white", outline_color="black"):
     x, y = position
     for adj in range(-2, 3):
@@ -66,7 +90,6 @@ def edit_user_image(image_bytes, user_prompt):
         
         prompt_lower = user_prompt.lower()
         
-        # Определяем, какой текст нанести, если в промпте есть ключевые слова
         text_to_draw = "CHITOM"
         if "chitom" in prompt_lower:
             text_to_draw = "CHITOM"
@@ -75,12 +98,10 @@ def edit_user_image(image_bytes, user_prompt):
         elif "бургер" in prompt_lower:
             text_to_draw = "БУРГЕР"
         elif user_prompt.strip():
-            # Если текста много, берем первые пару слов
             words = user_prompt.split()
             if len(words) > 1:
                 text_to_draw = " ".join(words[1:4]).upper()
 
-        # Применяем фильтры/трансформации, если они есть в промпте
         if "invert" in prompt_lower or "инверт" in prompt_lower:
             img = ImageOps.invert(img)
         elif "bw" in prompt_lower or "чб" in prompt_lower or "черно" in prompt_lower:
@@ -90,23 +111,18 @@ def edit_user_image(image_bytes, user_prompt):
         elif "mirror" in prompt_lower or "зеркал" in prompt_lower:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
-        # Накладываем текст (астральный маркер)
         try:
-            # Масштабируем шрифт под размер картинки
             font = ImageFont.truetype(FONT_NAME, int(height / 12))
         except:
             font = ImageFont.load_default()
 
-        # Рисуем текст в верхней части
         x = width // 10
         y = height // 10
         draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
 
-        # Сохраняем в оперативную память (BytesIO)
         bio = io.BytesIO()
         img.save(bio, format='JPEG')
         bio.seek(0)
-        # Обязательно даем имя файлу, чтобы Telegram его принял!
         bio.name = 'edited.jpg'
         return bio
     except Exception as e:
@@ -166,9 +182,31 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи. /make_meme — мем, /edit [текст] — молчаливый фотошоп картинки.")
+    bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля, /make_meme — мем, /edit [текст] — фотошоп.")
 
-# ИСПРАВЛЕНО: Теперь эта команда работает молча и отправляет ТОЛЬКО фото
+# ================= КОМАНДА /draw ДЛЯ ИИ-ГЕНЕРАЦИИ =================
+@bot.message_handler(commands=['draw', 'gen'])
+def draw_command(message):
+    prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
+    if not prompt:
+        bot.reply_to(message, "Напиши, что нарисовать, епта! Например: /draw калашников кбунгир")
+        return
+
+    status_msg = bot.reply_to(message, "Отправляю запрос нейросети... Рисую шедевр!")
+
+    try:
+        # Скачиваем сгенерированную картинку
+        image_bytes = generate_ai_image(prompt)
+        
+        if image_bytes:
+            bot.send_photo(message.chat.id, image_bytes, reply_to_message_id=message.message_id)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+        else:
+            bot.edit_message_text("Мой астральный мольберт сломался. Попробуй еще раз.", message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"Системная ошибка рисования: {e}", message.chat.id, status_msg.message_id)
+# ======================================================================
+
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
     target_message = message.reply_to_message if message.reply_to_message else message
@@ -178,7 +216,6 @@ def edit_command(message):
         return
 
     user_prompt = message.text.replace('/edit', '').strip()
-    # Краткий статус, чтобы пользователь знал, что бот работает
     status_msg = bot.reply_to(message, "Применяю астральные фильтры...")
 
     try:
@@ -186,13 +223,10 @@ def edit_command(message):
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # 1. Молча изменяем картинку в оперативной памяти
         photo_bio = edit_user_image(downloaded_file, user_prompt)
 
         if photo_bio:
-            # 2. Отправляем ТОЛЬКО измененную картинку без текста
             bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
-            # Удаляем статусное сообщение
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
             bot.edit_message_text("Не удалось изменить картинку. Проблемы на астральном плане.", message.chat.id, status_msg.message_id)
@@ -259,7 +293,7 @@ def handle_message(message):
     try:
         history_text = "\n".join(dialog_context[chat_id])
         prompt = (
-            f"Вот последние сообщения в этом чате (используй их для понимания контекста):\n{history_text}\n\n"
+            f"Вот последние сообщения в этом чате:\n{history_text}\n\n"
             f"Основываясь на этом диалоге, ответь на последнее сообщение пользователя {user_name}."
         )
 
@@ -296,7 +330,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Silent PhotoBot is running!')
+        self.wfile.write(b'Bot with AI Generation is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
