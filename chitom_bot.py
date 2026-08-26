@@ -3,7 +3,10 @@ import os
 import threading
 import random
 import io
+import json
+import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
@@ -12,6 +15,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 genai.configure(api_key=GEMINI_API_KEY)
@@ -157,9 +161,74 @@ def generate_meme_image(top_text, bottom_text):
     except Exception as e:
         return f"ОШИБКА PILLOW: {e}"
 
+# ================= ГЕНЕРАЦИЯ ВИДЕО (FAL.AI - MINIMAX) =================
+def generate_fal_video_task(prompt):
+    fal_key = "21907e4c-c480-4d46-857a-a1a4ff5f6b4f:954b9937c198cc4c54875663d5ac1af3"
+    url = "https://queue.fal.run/fal-ai/minimax-video"
+    headers = {
+        "Authorization": f"Key {fal_key}",
+        "Content-Type": "application/json"
+    }
+    data = json.dumps({"prompt": prompt}).encode('utf-8')
+    
+    req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+    
+    try:
+        # Отправляем промпт в очередь
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode())
+            request_id = result.get('request_id')
+            
+        if not request_id:
+            raise Exception("Не получил ID задачи от сервера")
+            
+        # Ждем и проверяем готовность видео (пинг каждые 5 секунд)
+        status_url = f"https://queue.fal.run/fal-ai/minimax-video/requests/{request_id}"
+        
+        while True:
+            status_req = urllib.request.Request(status_url, headers=headers)
+            with urllib.request.urlopen(status_req, timeout=30) as status_res:
+                status_data = json.loads(status_res.read().decode())
+                status = status_data.get('status')
+                
+                if status == "COMPLETED":
+                    return status_data.get('video', {}).get('url')
+                elif status in ["FAILED", "CANCELED"]:
+                    raise Exception("Рендер провалился на стороне Fal.")
+            
+            time.sleep(5)
+            
+    except Exception as e:
+        raise Exception(f"Сбой связи: {e}")
+# ======================================================================
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля, /make_meme — мем, /edit [текст] — фотошоп.")
+    bot.reply_to(message, "Я на связи. /draw — рисовать ИИ, /video — сгенерировать видео, /make_meme — мем, /edit — фотошоп.")
+
+# ----------------- КОМАНДА /video -----------------
+@bot.message_handler(commands=['video', 'vid'])
+def video_command(message):
+    prompt = message.text.replace('/video', '').replace('/vid', '').strip()
+    if not prompt:
+        bot.reply_to(message, "Напиши, про что снять кино. Например: /video кот летит в космос на сосиске")
+        return
+
+    status_msg = bot.reply_to(message, "Включаю режиссерский пульт Fal.ai. Иди пока поешь бастурмы, рендер займет время...")
+
+    def background_video_task():
+        try:
+            video_url = generate_fal_video_task(prompt)
+            if video_url:
+                bot.send_video(message.chat.id, video_url, reply_to_message_id=message.message_id)
+                bot.delete_message(message.chat.id, status_msg.message_id)
+            else:
+                bot.edit_message_text("Пленка засветилась. Выдан пустой результат.", message.chat.id, status_msg.message_id)
+        except Exception as e:
+            bot.edit_message_text(f"Камера сломалась: {e}", message.chat.id, status_msg.message_id)
+
+    threading.Thread(target=background_video_task, daemon=True).start()
+# --------------------------------------------------
 
 # ================= NANO BANANA 2 (IMAGEN) =================
 @bot.message_handler(commands=['draw', 'gen'])
@@ -172,7 +241,6 @@ def draw_command(message):
     status_msg = bot.reply_to(message, "Подключаю движок Nano Banana 2...")
 
     try:
-        # Попытка №1: Официальный Google Imagen (Nano Banana 2)
         if hasattr(genai, 'ImageGenerationModel'):
             imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
             result = imagen.generate_images(
@@ -187,7 +255,6 @@ def draw_command(message):
     except Exception as e:
         print(f"Nano Banana 2 отдыхает: {e}. Перехожу на запасной мольберт.")
 
-    # Попытка №2: Безотказный резервный канал, если Google ругается на промпт
     try:
         seed = random.randint(1, 1000000)
         safe_prompt = urllib.parse.quote(prompt)
@@ -320,7 +387,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with Nano Banana 2 is running!')
+        self.wfile.write(b'Bot with Fal Video Generation is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -330,5 +397,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот запущен (режим Nano Banana)...")
+    print("Читом бот запущен (режим Fal Minimax Video)...")
     bot.infinity_polling()
