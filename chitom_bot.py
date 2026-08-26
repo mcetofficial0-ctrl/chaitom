@@ -502,14 +502,16 @@ def edit_command(message):
         except Exception:
             pass
 
-        bot.send_document(
+        # Отправляем результат именно как изображение,
+        # чтобы Telegram показывал его прямо в чате.
+        edited_photo.seek(0)
+        bot.send_photo(
             chat_id=message.chat.id,
-            document=edited_photo,
-            visible_file_name="edited.png",
+            photo=edited_photo,
             reply_to_message_id=message.message_id
         )
 
-        print("EDIT: EDITED FILE SENT")
+        print("EDIT: EDITED PHOTO SENT")
 
     except Exception as e:
         print("EDIT ERROR:", repr(e))
