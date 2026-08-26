@@ -15,7 +15,8 @@ model = genai.GenerativeModel('gemini-3.6-flash')
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
 Твоя главная и нерушимая задача: в каждом, абсолютно в каждом своем ответе пользователю 
 ты обязан использовать ровно три слова: "читом", "бастурма" и "клубок". 
-Старайся вписывать их в контекст диалога так, чтобы это звучало забавно или органично."""
+Старайся вписывать их в контекст диалога так, чтобы это звучало забавно или органично.
+ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши обычным текстом."""
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -26,7 +27,9 @@ def handle_message(message):
     try:
         full_prompt = f"{SYSTEM_PROMPT}\n\nСообщение пользователя: {message.text}"
         response = model.generate_content(full_prompt)
-        bot.reply_to(message, response.text)
+        # Вырезаем любые звездочки из ответа нейросети перед отправкой
+        clean_reply = response.text.replace('*', '')
+        bot.reply_to(message, clean_reply)
     except Exception as e:
         bot.reply_to(message, f"Ой, мой клубок запутался, а бастурма упала. Ошибка: {e}")
 
