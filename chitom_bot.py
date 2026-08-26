@@ -43,7 +43,7 @@ def handle_message(message):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": message.text}
             ],
-            model="llama-3.1-8b-instant", # Это легкая, быстрая и бесплатная модель
+            model="mixtral-8x7b-32768", # Это легкая, быстрая и бесплатная модель
         )
         
         # Получаем ответ
