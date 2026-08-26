@@ -1,3 +1,5 @@
+opencv-python-headless
+numpy
+Pillow
 pyTelegramBotAPI
 google-generativeai
-Pillow
