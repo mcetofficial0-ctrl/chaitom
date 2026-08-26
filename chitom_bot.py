@@ -7,30 +7,63 @@ import base64
 import re
 import json
 import time
-import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
-from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
+
+from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+# ==========================================================
+# CONFIG
+# ==========================================================
 
-genai.configure(api_key=GEMINI_API_KEY)
-image_client = new_genai.Client(api_key=GEMINI_API_KEY)
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-TEMPLATE_NAME = 'template.jpg'
-FONT_NAME = 'arial.ttf'       
-RESULT_NAME = 'meme_result.jpg'
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("Не задан TELEGRAM_TOKEN")
 
-# Обязательно замените на юзернейм вашего бота
-BOT_USERNAME = '@chaitom_bot' 
+if not GEMINI_API_KEY:
+    raise RuntimeError("Не задан GEMINI_API_KEY")
+
+
+bot = telebot.TeleBot(
+    TELEGRAM_TOKEN,
+    parse_mode=None
+)
+
+# Старый google.generativeai используется для текстового чата
+genai.configure(
+    api_key=GEMINI_API_KEY
+)
+
+# Новый SDK используется для изображений и видео
+image_client = new_genai.Client(
+    api_key=GEMINI_API_KEY
+)
+
+
+# ==========================================================
+# FILES
+# ==========================================================
+
+TEMPLATE_NAME = "template.jpg"
+FONT_NAME = "arial.ttf"
+RESULT_NAME = "meme_result.jpg"
+
+
+# Обязательно укажи реальный username бота
+BOT_USERNAME = "@chaitom_bot"
+
+
+# ==========================================================
+# CHAT HISTORY
+# ==========================================================
 
 chat_history = []
 HISTORY_LIMIT = 1000
@@ -38,363 +71,90 @@ HISTORY_LIMIT = 1000
 dialog_context = {}
 CONTEXT_LIMIT = 15
 
+
+# ==========================================================
+# GEMINI TEXT MODEL
+# ==========================================================
+
 safety_settings = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_NONE"
+    },
+    {
+        "category": "HARM_CATEGORY_HATE_SPEECH",
+        "threshold": "BLOCK_NONE"
+    },
+    {
+        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "threshold": "BLOCK_NONE"
+    },
+    {
+        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "threshold": "BLOCK_NONE"
+    }
 ]
 
-SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
+
+SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот".
 Твой характер: ты ироничный, абсурдный и саркастичный шутник.
 
-ГЛАВНОЕ ПРАВИЛО: ОТВЕЧАЙ ОЧЕНЬ КОРОТКО. Твои сообщения должны состоять из 1-3 предложений максимум. Никаких длинных абзацев и долгих монологов. Руби с плеча, отвечай лаконично, дерзко и по факту.
+ГЛАВНОЕ ПРАВИЛО: ОТВЕЧАЙ ОЧЕНЬ КОРОТКО.
+Твои сообщения должны состоять из 1-3 предложений максимум.
+Никаких длинных абзацев и долгих монологов.
+Руби с плеча, отвечай лаконично, дерзко и по факту.
 
-ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР (используй редко и к месту):
-1. Слова: "читом", "клубок" (его всегда сосут) и "бастурма" (блюдо, которое подают самым первым).
+ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ (используй редко и к месту):
+1. Слова: "читом", "клубок" и "бастурма".
 2. Твои знакомые:
-   - Степан Клитор — депрессивный музыкант (суицидальные мысли).
+   - Степан Клитор — депрессивный музыкант.
    - Андрей Визард — фанат бургеров.
    - Роман Линкин — суровый фанат My Little Pony.
 
-ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши строго обычным текстом."""
-
-model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
-
-def draw_text_with_outline(draw, text, position, font, text_color="white", outline_color="black"):
-    x, y = position
-    for adj in range(-2, 3):
-        draw.text((x+adj, y), text, font=font, fill=outline_color)
-        draw.text((x, y+adj), text, font=font, fill=outline_color)
-    draw.text((x, y), text, font=font, fill=text_color)
-
-def get_aspect_ratio(width, height):
-    ratio = width / height
-    candidates = {
-        "1:1": 1.0,
-        "4:3": 4 / 3,
-        "3:4": 3 / 4,
-        "16:9": 16 / 9,
-        "9:16": 9 / 16,
-        "3:2": 3 / 2,
-        "2:3": 2 / 3,
-        "5:4": 5 / 4,
-        "4:5": 4 / 5,
-        "21:9": 21 / 9,
-    }
-    return min(candidates, key=lambda x: abs(candidates[x] - ratio))
-
-
-def _is_gemini_overload_error(exc):
-    """Определяет временную ошибку перегрузки/недоступности Gemini."""
-    text = str(exc).upper()
-    return (
-        "503" in text
-        or "UNAVAILABLE" in text
-        or "HIGH DEMAND" in text
-        or "RESOURCE EXHAUSTED" in text
-        or "429" in text
-    )
-
-
-def _generate_image_edit(model_name, edit_prompt, original):
-    """Один запрос к Gemini image model."""
-    return image_client.models.generate_content(
-        model=model_name,
-        contents=[
-            edit_prompt,
-            original,
-        ],
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"]
-        )
-    )
-
-
-def edit_user_image(image_bytes, user_prompt):
-    """
-    Редактирует исходное изображение напрямую через Gemini Image.
-
-    Основная модель:
-        gemini-3.1-flash-image
-
-    Если она временно недоступна (503/429), делаем несколько повторов
-    и затем пробуем более лёгкую:
-        gemini-3.1-flash-lite-image
-    """
-    original = Image.open(
-        io.BytesIO(image_bytes)
-    ).convert("RGB")
-
-    edit_prompt = f"""
-Edit the provided image directly according to this instruction:
-
-{user_prompt}
-
-Keep the original image, subject identity, composition, perspective,
-camera angle, lighting, background and details unless the instruction
-explicitly asks to change them.
-
-Only make the requested edits.
-Do not describe the image.
-Do not answer with text.
-Return the edited image itself.
+ВАЖНО:
+Ни в коем случае не используй звездочки (*) и форматирование текста.
+Пиши строго обычным текстом.
 """
 
-    models_to_try = [
-        "gemini-3.1-flash-image",
-        "gemini-3.1-flash-lite-image",
-    ]
 
-    last_error = None
+model = genai.GenerativeModel(
+    "gemini-3.6-flash",
+    system_instruction=SYSTEM_PROMPT,
+    safety_settings=safety_settings
+)
 
-    for model_name in models_to_try:
 
-        # Основную модель пробуем до 3 раз.
-        attempts = 3 if model_name == "gemini-3.1-flash-image" else 2
+# ==========================================================
+# COMMON HELPERS
+# ==========================================================
 
-        for attempt in range(attempts):
-            try:
-                print(
-                    f"EDIT: model={model_name}, "
-                    f"attempt={attempt + 1}/{attempts}"
-                )
+def is_temporary_gemini_error(exc):
+    """
+    Определяет временную ошибку Gemini.
+    """
 
-                response = _generate_image_edit(
-                    model_name,
-                    edit_prompt,
-                    original
-                )
+    text = str(exc).upper()
 
-                # Ищем именно image-part.
-                for candidate in getattr(response, "candidates", []) or []:
-                    content = getattr(candidate, "content", None)
-
-                    for part in getattr(content, "parts", []) or []:
-                        inline_data = getattr(
-                            part,
-                            "inline_data",
-                            None
-                        )
-
-                        if (
-                            inline_data is not None
-                            and
-                            getattr(inline_data, "data", None)
-                        ):
-                            result_bytes = inline_data.data
-
-                            if isinstance(
-                                result_bytes,
-                                str
-                            ):
-                                result_bytes = base64.b64decode(
-                                    result_bytes
-                                )
-
-                            output = io.BytesIO(
-                                result_bytes
-                            )
-                            output.seek(0)
-                            output.name = "edited.png"
-
-                            print(
-                                "EDIT: image received from",
-                                model_name
-                            )
-
-                            return output
-
-                # На случай другой структуры ответа
-                for part in getattr(response, "parts", []) or []:
-                    inline_data = getattr(
-                        part,
-                        "inline_data",
-                        None
-                    )
-
-                    if (
-                        inline_data is not None
-                        and
-                        getattr(inline_data, "data", None)
-                    ):
-                        result_bytes = inline_data.data
-
-                        if isinstance(
-                            result_bytes,
-                            str
-                        ):
-                            result_bytes = base64.b64decode(
-                                result_bytes
-                            )
-
-                        output = io.BytesIO(
-                            result_bytes
-                        )
-                        output.seek(0)
-                        output.name = "edited.png"
-
-                        return output
-
-                raise RuntimeError(
-                    f"{model_name} не вернул изображение."
-                )
-
-            except Exception as e:
-                last_error = e
-
-                print(
-                    f"EDIT ERROR {model_name} "
-                    f"attempt {attempt + 1}: {repr(e)}"
-                )
-
-                # Не имеет смысла долго повторять постоянную ошибку
-                if not _is_gemini_overload_error(e):
-                    raise
-
-                if attempt < attempts - 1:
-                    delay = 2 ** (attempt + 1)
-                    print(
-                        f"EDIT: временная ошибка, "
-                        f"повтор через {delay} сек."
-                    )
-                    time.sleep(delay)
-
-        # Если основная модель не отвечает из-за перегрузки,
-        # автоматически переходим на Lite.
-
-        print(
-            f"EDIT: {model_name} недоступна, "
-            f"пробую следующую модель."
-        )
-
-    raise RuntimeError(
-        "Сервис Gemini временно перегружен. "
-        "Не удалось получить изображение после повторных попыток. "
-        f"Последняя ошибка: {last_error}"
+    return (
+        "429" in text
+        or "RESOURCE_EXHAUSTED" in text
+        or "503" in text
+        or "UNAVAILABLE" in text
+        or "HIGH DEMAND" in text
+        or "OVERLOADED" in text
+        or "SERVICE UNAVAILABLE" in text
+        or "TIMEOUT" in text
     )
 
-def text_wrap(text, font, max_width):
-    lines = []
-    if font.getlength(text) <= max_width:
-        lines.append(text)
-    else:
-        words = text.split(' ')
-        i = 0
-        while i < len(words):
-            line = ''
-            while i < len(words) and font.getlength(line + words[i]) <= max_width:
-                line = line + words[i] + ' '
-                i += 1
-            if not line:
-                line = words[i]
-                i += 1
-            lines.append(line.strip())
-    return lines
 
-def generate_meme_image(top_text, bottom_text):
-    try:
-        if not os.path.exists(TEMPLATE_NAME):
-            return "ОШИБКА: Не найден файл картинки 'template.jpg'"
-        if not os.path.exists(FONT_NAME):
-            return "ОШИБКА: Не найден файл шрифта 'arial.ttf'"
+def sleep_with_log(seconds):
+    print(f"WAIT: {seconds} sec.")
+    time.sleep(seconds)
 
-        img = Image.open(TEMPLATE_NAME)
-        draw = ImageDraw.Draw(img)
-        font_top = ImageFont.truetype(FONT_NAME, 40)
-        font_bottom = ImageFont.truetype(FONT_NAME, 50)
-        width, height = img.size
-        max_txt_width = width * 0.9 
 
-        lines_top = text_wrap(top_text, font_top, max_txt_width)
-        current_h = 20
-        for line in lines_top:
-            w = font_top.getlength(line)
-            draw_text_with_outline(draw, line, ((width - w) / 2, current_h), font_top)
-            current_h += font_top.getbbox(line)[3] + 5
-
-        lines_bottom = text_wrap(bottom_text, font_bottom, max_txt_width)
-        current_h = height * 0.7 
-        for line in lines_bottom:
-            w = font_bottom.getlength(line)
-            draw_text_with_outline(draw, line, ((width - w) / 2, current_h), font_bottom)
-            current_h += font_bottom.getbbox(line)[3] + 5
-
-        img.save(RESULT_NAME)
-        return RESULT_NAME
-    except Exception as e:
-        return f"ОШИБКА PILLOW: {e}"
-
-# ================= ГЕНЕРАЦИЯ ВИДЕО (FAL.AI - MINIMAX) =================
-def generate_fal_video_task(prompt):
-    fal_key = "21907e4c-c480-4d46-857a-a1a4ff5f6b4f:954b9937c198cc4c54875663d5ac1af3"
-    url = "https://queue.fal.run/fal-ai/minimax-video"
-    headers = {
-        "Authorization": f"Key {fal_key}",
-        "Content-Type": "application/json"
-    }
-    data = json.dumps({"prompt": prompt}).encode('utf-8')
-    
-    req = urllib.request.Request(url, data=data, headers=headers, method='POST')
-    
-    try:
-        # Отправляем промпт в очередь
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode())
-            request_id = result.get('request_id')
-            
-        if not request_id:
-            raise Exception("Не получил ID задачи от сервера")
-            
-        # Ждем и проверяем готовность видео (пинг каждые 5 секунд)
-        status_url = f"https://queue.fal.run/fal-ai/minimax-video/requests/{request_id}"
-        
-        while True:
-            status_req = urllib.request.Request(status_url, headers=headers)
-            with urllib.request.urlopen(status_req, timeout=30) as status_res:
-                status_data = json.loads(status_res.read().decode())
-                status = status_data.get('status')
-                
-                if status == "COMPLETED":
-                    return status_data.get('video', {}).get('url')
-                elif status in ["FAILED", "CANCELED"]:
-                    raise Exception("Рендер провалился на стороне Fal.")
-            
-            time.sleep(5)
-            
-    except Exception as e:
-        raise Exception(f"Сбой связи: {e}")
-# ======================================================================
-
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "Я на связи. /draw — рисовать ИИ, /video — сгенерировать видео, /make_meme — мем, /edit — фотошоп.")
-
-# ----------------- КОМАНДА /video -----------------
-@bot.message_handler(commands=['video', 'vid'])
-def video_command(message):
-    prompt = message.text.replace('/video', '').replace('/vid', '').strip()
-    if not prompt:
-        bot.reply_to(message, "Напиши, про что снять кино. Например: /video кот летит в космос на сосиске")
-        return
-
-    status_msg = bot.reply_to(message, "Включаю режиссерский пульт Fal.ai. Иди пока поешь бастурмы, рендер займет время...")
-
-    def background_video_task():
-        try:
-            video_url = generate_fal_video_task(prompt)
-            if video_url:
-                bot.send_video(message.chat.id, video_url, reply_to_message_id=message.message_id)
-                bot.delete_message(message.chat.id, status_msg.message_id)
-            else:
-                bot.edit_message_text("Пленка засветилась. Выдан пустой результат.", message.chat.id, status_msg.message_id)
-        except Exception as e:
-            bot.edit_message_text(f"Камера сломалась: {e}", message.chat.id, status_msg.message_id)
-
-    threading.Thread(target=background_video_task, daemon=True).start()
-# --------------------------------------------------
-
-# ================= DRAW — NANO BANANA PRO + FALLBACK =================
+# ==========================================================
+# DRAW — NANO BANANA PRO
+# ==========================================================
 
 DRAW_MODELS = [
     {
@@ -410,88 +170,111 @@ DRAW_MODELS = [
 ]
 
 
-def is_temporary_gemini_error(exc):
-    """
-    Определяет временные ошибки Gemini:
-    429 — слишком много запросов
-    503 — сервис временно перегружен
-    """
-    text = str(exc).upper()
-
-    return (
-        "429" in text
-        or "RESOURCE_EXHAUSTED" in text
-        or "503" in text
-        or "UNAVAILABLE" in text
-        or "HIGH DEMAND" in text
-        or "OVERLOADED" in text
-        or "SERVICE UNAVAILABLE" in text
-    )
-
-
 def extract_image_bytes(response):
     """
-    Извлекает байты изображения из ответа Gemini.
-
-    Поддерживает несколько вариантов структуры ответа,
-    чтобы код не ломался из-за различий версий SDK.
+    Извлекает raw image bytes из ответа Gemini.
+    Работает с разными структурами ответа SDK.
     """
 
-    # Вариант 1 — response.parts
+    # ------------------------------------------------------
+    # response.parts
+    # ------------------------------------------------------
+
     parts = getattr(response, "parts", None)
 
     if parts:
         for part in parts:
-            inline_data = getattr(part, "inline_data", None)
+            inline_data = getattr(
+                part,
+                "inline_data",
+                None
+            )
 
-            if inline_data is not None:
-                data = getattr(inline_data, "data", None)
+            if inline_data is None:
+                continue
 
-                if data:
-                    if isinstance(data, str):
-                        try:
-                            return base64.b64decode(data)
-                        except Exception:
-                            return data.encode("utf-8")
+            data = getattr(
+                inline_data,
+                "data",
+                None
+            )
 
-                    return data
+            if not data:
+                continue
 
-    # Вариант 2 — response.candidates[*].content.parts
-    candidates = getattr(response, "candidates", None)
+            if isinstance(data, str):
+                try:
+                    return base64.b64decode(data)
+                except Exception:
+                    return data.encode("utf-8")
+
+            return data
+
+    # ------------------------------------------------------
+    # candidates -> content -> parts
+    # ------------------------------------------------------
+
+    candidates = getattr(
+        response,
+        "candidates",
+        None
+    )
 
     if candidates:
         for candidate in candidates:
-            content = getattr(candidate, "content", None)
+
+            content = getattr(
+                candidate,
+                "content",
+                None
+            )
 
             if not content:
                 continue
 
-            parts = getattr(content, "parts", None)
+            parts = getattr(
+                content,
+                "parts",
+                None
+            )
 
             if not parts:
                 continue
 
             for part in parts:
-                inline_data = getattr(part, "inline_data", None)
 
-                if inline_data is not None:
-                    data = getattr(inline_data, "data", None)
+                inline_data = getattr(
+                    part,
+                    "inline_data",
+                    None
+                )
 
-                    if data:
-                        if isinstance(data, str):
-                            try:
-                                return base64.b64decode(data)
-                            except Exception:
-                                return data.encode("utf-8")
+                if inline_data is None:
+                    continue
 
-                        return data
+                data = getattr(
+                    inline_data,
+                    "data",
+                    None
+                )
+
+                if not data:
+                    continue
+
+                if isinstance(data, str):
+                    try:
+                        return base64.b64decode(data)
+                    except Exception:
+                        return data.encode("utf-8")
+
+                return data
 
     return None
 
 
 def generate_draw_image(model_name, prompt):
     """
-    Один запрос к указанной image-модели.
+    Один запрос к image model.
     """
 
     response = image_client.models.generate_content(
@@ -505,18 +288,22 @@ def generate_draw_image(model_name, prompt):
     image_bytes = extract_image_bytes(response)
 
     if not image_bytes:
-        # Пытаемся вывести текст ответа для диагностики
+
         response_text = ""
 
         try:
-            response_text = getattr(response, "text", "") or ""
+            response_text = getattr(
+                response,
+                "text",
+                ""
+            ) or ""
         except Exception:
             pass
 
         raise RuntimeError(
             "Модель не вернула изображение."
             + (
-                f" Ответ модели: {response_text[:500]}"
+                f" Ответ: {response_text[:500]}"
                 if response_text
                 else ""
             )
@@ -525,21 +312,44 @@ def generate_draw_image(model_name, prompt):
     return image_bytes
 
 
-@bot.message_handler(commands=['draw', 'gen'])
+@bot.message_handler(
+    commands=["draw", "gen"]
+)
 def draw_command(message):
-    prompt = (
+
+    user_prompt = (
         message.text
-        .replace('/draw', '')
-        .replace('/gen', '')
+        .replace("/draw", "")
+        .replace("/gen", "")
         .strip()
     )
 
-    if not prompt:
+    if not user_prompt:
         bot.reply_to(
             message,
             "Напиши, что нарисовать. Например: /draw кот в космосе"
         )
         return
+
+    # ------------------------------------------------------
+    # Русский промпт -> подробная инструкция для модели
+    # ------------------------------------------------------
+
+    prompt = f"""
+Create the image exactly according to the user's request.
+
+The user's request may be written in Russian.
+Understand Russian naturally and preserve all details,
+objects, characters, actions, composition, perspective,
+lighting, atmosphere, visual style, camera angle,
+environment and any requested text.
+
+Do not change the intended meaning.
+Do not add unnecessary elements.
+
+USER REQUEST:
+{user_prompt}
+"""
 
     status_msg = bot.reply_to(
         message,
@@ -550,7 +360,10 @@ def draw_command(message):
     generated_image = None
     successful_model = None
 
-    # Пробуем модели по очереди
+    # ------------------------------------------------------
+    # Models
+    # ------------------------------------------------------
+
     for model_info in DRAW_MODELS:
 
         model_name = model_info["name"]
@@ -560,9 +373,9 @@ def draw_command(message):
         for attempt in range(1, attempts + 1):
 
             try:
+
                 print(
                     f"DRAW: {model_label} "
-                    f"({model_name}) "
                     f"attempt {attempt}/{attempts}"
                 )
 
@@ -574,30 +387,26 @@ def draw_command(message):
                 successful_model = model_label
 
                 print(
-                    f"DRAW: успешно — {model_label}"
+                    f"DRAW: success -> {model_label}"
                 )
 
                 break
 
             except Exception as e:
+
                 last_error = e
 
                 print(
-                    f"DRAW ERROR: {model_label}, "
+                    f"DRAW ERROR: {model_label} "
                     f"attempt {attempt}/{attempts}: "
                     f"{repr(e)}"
                 )
 
-                # Постоянная ошибка — сразу переходим
-                # к следующей модели
+                # Не временная ошибка
                 if not is_temporary_gemini_error(e):
-                    print(
-                        f"DRAW: ошибка не временная, "
-                        f"перехожу на следующую модель."
-                    )
                     break
 
-                # Если остались попытки — ждём
+                # Остались попытки
                 if attempt < attempts:
 
                     delay = min(
@@ -605,37 +414,35 @@ def draw_command(message):
                         10
                     )
 
-                    print(
-                        f"DRAW: временная ошибка, "
-                        f"повтор через {delay} сек."
-                    )
+                    sleep_with_log(delay)
 
-                    time.sleep(delay)
-
-        # Если картинка получена — прекращаем перебор моделей
         if generated_image:
             break
 
-        # Обновляем статус перед fallback
+        # Перед fallback
         if model_name != DRAW_MODELS[-1]["name"]:
 
             try:
                 bot.edit_message_text(
-                    "🍌 Pro занят, переключаюсь на запасной Nano Banana 2...",
+                    "🍌 Pro занят, переключаюсь на Nano Banana 2...",
                     message.chat.id,
                     status_msg.message_id
                 )
             except Exception:
                 pass
 
-    # ---------------------------------------------------------
-    # Если изображение получено
-    # ---------------------------------------------------------
+    # ------------------------------------------------------
+    # Send image
+    # ------------------------------------------------------
 
     if generated_image:
 
         try:
-            output = io.BytesIO(generated_image)
+
+            output = io.BytesIO(
+                generated_image
+            )
+
             output.seek(0)
             output.name = "generated.png"
 
@@ -654,11 +461,11 @@ def draw_command(message):
             )
 
             print(
-                f"DRAW: изображение отправлено "
-                f"через {successful_model}"
+                f"DRAW: sent via {successful_model}"
             )
 
         except Exception as e:
+
             print(
                 "DRAW TELEGRAM ERROR:",
                 repr(e)
@@ -675,16 +482,18 @@ def draw_command(message):
 
         return
 
-    # ---------------------------------------------------------
-    # Все модели провалились
-    # ---------------------------------------------------------
+    # ------------------------------------------------------
+    # All models failed
+    # ------------------------------------------------------
 
     error_text = (
         "Не удалось сгенерировать изображение."
     )
 
     if last_error:
-        error_text += f"\n\nПоследняя ошибка:\n{last_error}"
+        error_text += (
+            f"\n\nПоследняя ошибка:\n{last_error}"
+        )
 
     print(
         "DRAW FINAL ERROR:",
@@ -692,22 +501,174 @@ def draw_command(message):
     )
 
     try:
+
         bot.edit_message_text(
             error_text,
             message.chat.id,
             status_msg.message_id
         )
+
     except Exception:
+
         bot.send_message(
             message.chat.id,
             error_text
         )
 
-# ==============================================================
-# ================= РЕДАКТИРОВАНИЕ КАРТИНОК =================
+
+# ==========================================================
+# EDIT IMAGE
+# ==========================================================
+
+def _generate_image_edit(
+    model_name,
+    edit_prompt,
+    original
+):
+    """
+    Один запрос на редактирование изображения.
+    """
+
+    return image_client.models.generate_content(
+        model=model_name,
+        contents=[
+            edit_prompt,
+            original,
+        ],
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"]
+        )
+    )
+
+
+def edit_user_image(
+    image_bytes,
+    user_prompt
+):
+    """
+    Редактирование изображения через Nano Banana 2.
+    """
+
+    original = Image.open(
+        io.BytesIO(image_bytes)
+    ).convert("RGB")
+
+    edit_prompt = f"""
+Edit the provided image directly according to this instruction.
+
+The user's instruction may be written in Russian.
+Understand it naturally and preserve the intended meaning.
+
+USER INSTRUCTION:
+{user_prompt}
+
+Keep the original image, subject identity,
+composition, perspective, camera angle, lighting,
+background and details unless the instruction explicitly
+asks to change them.
+
+Only make the requested edits.
+Do not describe the image.
+Do not answer with text.
+Return the edited image itself.
+"""
+
+    models_to_try = [
+        "gemini-3.1-flash-image",
+        "gemini-3.1-flash-lite-image",
+    ]
+
+    last_error = None
+
+    for model_name in models_to_try:
+
+        attempts = (
+            3
+            if model_name == "gemini-3.1-flash-image"
+            else 2
+        )
+
+        for attempt in range(attempts):
+
+            try:
+
+                print(
+                    f"EDIT: model={model_name}, "
+                    f"attempt={attempt + 1}/{attempts}"
+                )
+
+                response = _generate_image_edit(
+                    model_name,
+                    edit_prompt,
+                    original
+                )
+
+                result_bytes = extract_image_bytes(
+                    response
+                )
+
+                if result_bytes:
+
+                    output = io.BytesIO(
+                        result_bytes
+                    )
+
+                    output.seek(0)
+                    output.name = "edited.png"
+
+                    print(
+                        "EDIT: image received from",
+                        model_name
+                    )
+
+                    return output
+
+                raise RuntimeError(
+                    f"{model_name} не вернул изображение."
+                )
+
+            except Exception as e:
+
+                last_error = e
+
+                print(
+                    f"EDIT ERROR {model_name}:",
+                    repr(e)
+                )
+
+                if not is_temporary_gemini_error(e):
+                    raise
+
+                if attempt < attempts - 1:
+
+                    delay = min(
+                        2 ** (attempt + 1),
+                        10
+                    )
+
+                    sleep_with_log(delay)
+
+    raise RuntimeError(
+        "Не удалось отредактировать изображение.\n"
+        f"Последняя ошибка: {last_error}"
+    )
+
+
 def is_edit_message(message):
-    text = (message.text or message.caption or "").strip()
-    return bool(re.match(r"^/edit(?:@\w+)?(?:\s|$)", text, re.IGNORECASE))
+
+    text = (
+        message.text
+        or message.caption
+        or ""
+    ).strip()
+
+    return bool(
+        re.match(
+            r"^/edit(?:@\w+)?(?:\s|$)",
+            text,
+            re.IGNORECASE
+        )
+    )
 
 
 @bot.message_handler(
@@ -715,24 +676,46 @@ def is_edit_message(message):
     content_types=["text", "photo"]
 )
 def edit_command(message):
+
     print("========== /EDIT ==========")
-    print("TEXT:", repr(message.text))
-    print("CAPTION:", repr(message.caption))
 
-    # 1) Фото прикреплено прямо к сообщению /edit.
-    # 2) Либо /edit отправлен reply на существующую фотографию.
-    target_message = message if message.photo else message.reply_to_message
+    print(
+        "TEXT:",
+        repr(message.text)
+    )
 
-    if not target_message or not target_message.photo:
+    print(
+        "CAPTION:",
+        repr(message.caption)
+    )
+
+    # Фото прямо в сообщении
+    # или reply на существующее фото
+    target_message = (
+        message
+        if message.photo
+        else message.reply_to_message
+    )
+
+    if (
+        not target_message
+        or not target_message.photo
+    ):
         bot.reply_to(
             message,
-            "Прикрепи изображение к сообщению с /edit или сделай reply на фото.\n\n"
+            "Прикрепи изображение к /edit "
+            "или сделай reply на фото.\n\n"
             "Пример:\n"
-            "/edit сделай из него киборга"
+            "/edit добавь ему солнечные очки"
         )
         return
 
-    raw_text = message.caption if message.photo else message.text
+    raw_text = (
+        message.caption
+        if message.photo
+        else message.text
+    )
+
     raw_text = raw_text or ""
 
     user_prompt = re.sub(
@@ -744,178 +727,1215 @@ def edit_command(message):
     ).strip()
 
     if not user_prompt:
+
         bot.reply_to(
             message,
             "Напиши промпт для изменения картинки.\n"
             "Например: /edit добавь ему солнечные очки"
         )
+
         return
 
-    status = bot.reply_to(message, "Редактирую изображение...")
+    status = bot.reply_to(
+        message,
+        "Редактирую изображение..."
+    )
 
     try:
-        file_id = target_message.photo[-1].file_id
-        file_info = bot.get_file(file_id)
-        image_bytes = bot.download_file(file_info.file_path)
 
-        print("EDIT: downloaded", len(image_bytes), "bytes")
-        print("EDIT PROMPT:", user_prompt)
+        file_id = target_message.photo[-1].file_id
+
+        file_info = bot.get_file(
+            file_id
+        )
+
+        image_bytes = bot.download_file(
+            file_info.file_path
+        )
+
+        print(
+            "EDIT: downloaded",
+            len(image_bytes),
+            "bytes"
+        )
+
+        print(
+            "EDIT PROMPT:",
+            user_prompt
+        )
 
         edited_photo = edit_user_image(
             image_bytes,
             user_prompt
         )
+
         edited_photo.seek(0)
 
-        # Сначала удаляем статус, затем отдельным сообщением отправляем
-        # ТОЛЬКО готовое изображение.
         try:
+
             bot.delete_message(
                 message.chat.id,
                 status.message_id
             )
+
         except Exception:
             pass
 
-        # Отправляем результат именно как изображение,
-        # чтобы Telegram показывал его прямо в чате.
-        edited_photo.seek(0)
         bot.send_photo(
             chat_id=message.chat.id,
             photo=edited_photo,
             reply_to_message_id=message.message_id
         )
 
-        print("EDIT: EDITED PHOTO SENT")
+        print(
+            "EDIT: EDITED PHOTO SENT"
+        )
 
     except Exception as e:
-        print("EDIT ERROR:", repr(e))
+
+        print(
+            "EDIT ERROR:",
+            repr(e)
+        )
+
         try:
+
             bot.edit_message_text(
                 f"Ошибка редактирования: {e}",
                 message.chat.id,
                 status.message_id
             )
+
         except Exception:
+
             bot.send_message(
                 message.chat.id,
                 f"Ошибка редактирования: {e}"
             )
 
 
-@bot.message_handler(commands=['make_meme'])
+# ==========================================================
+# VEO 3.1 FAST
+# ==========================================================
+
+VEO_MODEL = "veo-3.1-fast-generate-preview"
+
+
+def generate_veo_video(
+    prompt,
+    message_id,
+    status_callback=None
+):
+    """
+    Генерация видео через Veo 3.1 Fast.
+
+    Veo 3.1:
+    - 8 секунд
+    - нативное аудио
+    - 16:9 / 9:16
+    - 720p / 1080p / 4K
+
+    Для Fast по умолчанию используем 720p 16:9.
+    """
+
+    # ------------------------------------------------------
+    # Русский prompt -> инструкция для Veo
+    # ------------------------------------------------------
+
+    veo_prompt = f"""
+Create an 8-second video exactly according to the user's request.
+
+The user's request may be written in Russian.
+Understand Russian naturally.
+
+Preserve all requested:
+- characters
+- objects
+- actions
+- environment
+- camera movement
+- composition
+- visual style
+- lighting
+- atmosphere
+- dialogue
+- sound effects
+- music
+- timing
+
+Do not change the intended meaning.
+Do not add unnecessary characters or objects.
+
+USER REQUEST:
+{prompt}
+"""
+
+    print(
+        f"VEO: model={VEO_MODEL}"
+    )
+
+    print(
+        f"VEO: user prompt={prompt}"
+    )
+
+    # ------------------------------------------------------
+    # Start operation
+    # ------------------------------------------------------
+
+    operation = image_client.models.generate_videos(
+        model=VEO_MODEL,
+        prompt=veo_prompt,
+        config=types.GenerateVideosConfig(
+            number_of_videos=1,
+            resolution="720p",
+            aspect_ratio="16:9"
+        )
+    )
+
+    print(
+        "VEO: operation created"
+    )
+
+    last_status_update = 0
+
+    # ------------------------------------------------------
+    # Poll
+    # ------------------------------------------------------
+
+    while not operation.done:
+
+        elapsed = int(
+            time.time() - last_status_update
+        )
+
+        if (
+            status_callback
+            and (
+                last_status_update == 0
+                or elapsed >= 30
+            )
+        ):
+
+            try:
+                status_callback(
+                    "🎬 Veo 3.1 Fast всё ещё рендерит..."
+                )
+            except Exception:
+                pass
+
+            last_status_update = time.time()
+
+        print(
+            "VEO: waiting for completion..."
+        )
+
+        time.sleep(10)
+
+        operation = image_client.operations.get(
+            operation
+        )
+
+    print(
+        "VEO: operation completed"
+    )
+
+    # ------------------------------------------------------
+    # Check response
+    # ------------------------------------------------------
+
+    if not operation.response:
+
+        raise RuntimeError(
+            "Veo завершил операцию без response."
+        )
+
+    generated_videos = getattr(
+        operation.response,
+        "generated_videos",
+        None
+    )
+
+    if not generated_videos:
+
+        raise RuntimeError(
+            "Veo не вернул generated_videos."
+        )
+
+    generated_video = generated_videos[0]
+
+    if not generated_video.video:
+
+        raise RuntimeError(
+            "Veo вернул пустой video object."
+        )
+
+    # ------------------------------------------------------
+    # Download
+    # ------------------------------------------------------
+
+    print(
+        "VEO: downloading video..."
+    )
+
+    image_client.files.download(
+        file=generated_video.video
+    )
+
+    filename = (
+        f"veo_"
+        f"{message_id}_"
+        f"{int(time.time())}.mp4"
+    )
+
+    generated_video.video.save(
+        filename
+    )
+
+    print(
+        f"VEO: saved {filename}"
+    )
+
+    return filename
+
+
+def is_temporary_veo_error(exc):
+    """
+    Определяет ошибки, при которых стоит повторить запрос.
+    """
+
+    text = str(exc).upper()
+
+    return (
+        "429" in text
+        or "RESOURCE_EXHAUSTED" in text
+        or "503" in text
+        or "UNAVAILABLE" in text
+        or "HIGH DEMAND" in text
+        or "OVERLOADED" in text
+        or "TIMEOUT" in text
+        or "DEADLINE" in text
+    )
+
+
+@bot.message_handler(
+    commands=["video", "vid"]
+)
+def video_command(message):
+
+    prompt = (
+        message.text
+        .replace("/video", "")
+        .replace("/vid", "")
+        .strip()
+    )
+
+    if not prompt:
+
+        bot.reply_to(
+            message,
+            "Напиши, что снять.\n\n"
+            "Например:\n"
+            "/video кот едет на велосипеде по Москве ночью"
+        )
+
+        return
+
+    status_msg = bot.reply_to(
+        message,
+        "🎬 Veo 3.1 Fast рендерит видео..."
+    )
+
+    def update_status(text):
+
+        try:
+
+            bot.edit_message_text(
+                text,
+                message.chat.id,
+                status_msg.message_id
+            )
+
+        except Exception:
+            pass
+
+    def background_video_task():
+
+        video_file = None
+        last_error = None
+
+        # --------------------------------------------------
+        # Retry Veo
+        # --------------------------------------------------
+
+        attempts = 3
+
+        for attempt in range(1, attempts + 1):
+
+            try:
+
+                print(
+                    f"VEO REQUEST "
+                    f"attempt={attempt}/{attempts}"
+                )
+
+                video_file = generate_veo_video(
+                    prompt,
+                    message.message_id,
+                    status_callback=update_status
+                )
+
+                break
+
+            except Exception as e:
+
+                last_error = e
+
+                print(
+                    f"VEO ERROR "
+                    f"attempt={attempt}/{attempts}:",
+                    repr(e)
+                )
+
+                if (
+                    attempt >= attempts
+                    or not is_temporary_veo_error(e)
+                ):
+                    break
+
+                delay = min(
+                    2 ** attempt,
+                    15
+                )
+
+                update_status(
+                    f"⚠️ Veo временно занят. "
+                    f"Повтор через {delay} сек..."
+                )
+
+                sleep_with_log(
+                    delay
+                )
+
+        # --------------------------------------------------
+        # Success
+        # --------------------------------------------------
+
+        if video_file:
+
+            try:
+
+                if not os.path.exists(
+                    video_file
+                ):
+                    raise RuntimeError(
+                        "Файл видео не найден."
+                    )
+
+                print(
+                    "VIDEO: sending to Telegram..."
+                )
+
+                try:
+                    bot.delete_message(
+                        message.chat.id,
+                        status_msg.message_id
+                    )
+                except Exception:
+                    pass
+
+                with open(
+                    video_file,
+                    "rb"
+                ) as video:
+
+                    bot.send_video(
+                        chat_id=message.chat.id,
+                        video=video,
+                        reply_to_message_id=message.message_id,
+                        supports_streaming=True
+                    )
+
+                print(
+                    "VIDEO: sent successfully"
+                )
+
+            except Exception as e:
+
+                print(
+                    "VIDEO TELEGRAM ERROR:",
+                    repr(e)
+                )
+
+                try:
+
+                    bot.edit_message_text(
+                        f"Видео создано, но Telegram не смог его отправить:\n{e}",
+                        message.chat.id,
+                        status_msg.message_id
+                    )
+
+                except Exception:
+
+                    bot.send_message(
+                        message.chat.id,
+                        f"Видео создано, но отправка не удалась:\n{e}"
+                    )
+
+            finally:
+
+                # Удаляем mp4 после отправки
+                if (
+                    video_file
+                    and os.path.exists(video_file)
+                ):
+
+                    try:
+
+                        os.remove(
+                            video_file
+                        )
+
+                        print(
+                            "VIDEO: temp file removed"
+                        )
+
+                    except Exception as e:
+
+                        print(
+                            "VIDEO CLEANUP ERROR:",
+                            repr(e)
+                        )
+
+            return
+
+        # --------------------------------------------------
+        # Error
+        # --------------------------------------------------
+
+        error_text = (
+            "❌ Не удалось сгенерировать видео."
+        )
+
+        if last_error:
+
+            error_text += (
+                f"\n\nОшибка:\n{last_error}"
+            )
+
+        try:
+
+            bot.edit_message_text(
+                error_text,
+                message.chat.id,
+                status_msg.message_id
+            )
+
+        except Exception:
+
+            bot.send_message(
+                message.chat.id,
+                error_text
+            )
+
+    # Важно: генерация идёт в отдельном потоке
+    # и не блокирует Telegram polling.
+
+    threading.Thread(
+        target=background_video_task,
+        daemon=True
+    ).start()
+
+
+# ==========================================================
+# MEME
+# ==========================================================
+
+def draw_text_with_outline(
+    draw,
+    text,
+    position,
+    font,
+    text_color="white",
+    outline_color="black"
+):
+
+    x, y = position
+
+    for adj in range(-2, 3):
+
+        draw.text(
+            (x + adj, y),
+            text,
+            font=font,
+            fill=outline_color
+        )
+
+        draw.text(
+            (x, y + adj),
+            text,
+            font=font,
+            fill=outline_color
+        )
+
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=text_color
+    )
+
+
+def text_wrap(
+    text,
+    font,
+    max_width
+):
+
+    lines = []
+
+    if font.getlength(text) <= max_width:
+
+        lines.append(text)
+
+    else:
+
+        words = text.split(" ")
+        i = 0
+
+        while i < len(words):
+
+            line = ""
+
+            while (
+                i < len(words)
+                and font.getlength(
+                    line + words[i]
+                ) <= max_width
+            ):
+
+                line = (
+                    line
+                    + words[i]
+                    + " "
+                )
+
+                i += 1
+
+            if not line:
+
+                line = words[i]
+                i += 1
+
+            lines.append(
+                line.strip()
+            )
+
+    return lines
+
+
+def generate_meme_image(
+    top_text,
+    bottom_text
+):
+
+    try:
+
+        if not os.path.exists(
+            TEMPLATE_NAME
+        ):
+
+            return (
+                "ОШИБКА: Не найден "
+                "template.jpg"
+            )
+
+        if not os.path.exists(
+            FONT_NAME
+        ):
+
+            return (
+                "ОШИБКА: Не найден "
+                "arial.ttf"
+            )
+
+        img = Image.open(
+            TEMPLATE_NAME
+        ).convert("RGB")
+
+        draw = ImageDraw.Draw(
+            img
+        )
+
+        font_top = ImageFont.truetype(
+            FONT_NAME,
+            40
+        )
+
+        font_bottom = ImageFont.truetype(
+            FONT_NAME,
+            50
+        )
+
+        width, height = img.size
+
+        max_txt_width = (
+            width * 0.9
+        )
+
+        # TOP
+
+        lines_top = text_wrap(
+            top_text,
+            font_top,
+            max_txt_width
+        )
+
+        current_h = 20
+
+        for line in lines_top:
+
+            w = font_top.getlength(
+                line
+            )
+
+            draw_text_with_outline(
+                draw,
+                line,
+                (
+                    (width - w) / 2,
+                    current_h
+                ),
+                font_top
+            )
+
+            current_h += (
+                font_top.getbbox(
+                    line
+                )[3]
+                + 5
+            )
+
+        # BOTTOM
+
+        lines_bottom = text_wrap(
+            bottom_text,
+            font_bottom,
+            max_txt_width
+        )
+
+        current_h = (
+            height * 0.7
+        )
+
+        for line in lines_bottom:
+
+            w = font_bottom.getlength(
+                line
+            )
+
+            draw_text_with_outline(
+                draw,
+                line,
+                (
+                    (width - w) / 2,
+                    current_h
+                ),
+                font_bottom
+            )
+
+            current_h += (
+                font_bottom.getbbox(
+                    line
+                )[3]
+                + 5
+            )
+
+        img.save(
+            RESULT_NAME,
+            "JPEG"
+        )
+
+        return RESULT_NAME
+
+    except Exception as e:
+
+        return (
+            f"ОШИБКА PILLOW: {e}"
+        )
+
+
+@bot.message_handler(
+    commands=["make_meme"]
+)
 def make_meme_command(message):
-    if message.chat.type not in ['group', 'supergroup']:
-        bot.reply_to(message, "Эту команду можно использовать только в групповом чате!")
+
+    if message.chat.type not in [
+        "group",
+        "supergroup"
+    ]:
+
+        bot.reply_to(
+            message,
+            "Эту команду можно использовать "
+            "только в групповом чате!"
+        )
+
         return
 
     if len(chat_history) < 2:
-        bot.reply_to(message, f"В истории пока маловато фраз ({len(chat_history)}). Пишите еще!")
+
+        bot.reply_to(
+            message,
+            f"В истории пока маловато фраз "
+            f"({len(chat_history)}). Пишите еще!"
+        )
+
         return
 
-    status_msg = bot.reply_to(message, "Делаю мем...")
+    status_msg = bot.reply_to(
+        message,
+        "Делаю мем..."
+    )
 
     try:
-        phrases = random.sample(chat_history, 2)
-        meme_result = generate_meme_image(phrases[0], phrases[1])
 
-        if meme_result and meme_result.startswith("ОШИБКА"):
-            bot.edit_message_text(f"Ошибка:\n{meme_result}", message.chat.id, status_msg.message_id)
+        phrases = random.sample(
+            chat_history,
+            2
+        )
+
+        meme_result = (
+            generate_meme_image(
+                phrases[0],
+                phrases[1]
+            )
+        )
+
+        if (
+            meme_result
+            and meme_result.startswith(
+                "ОШИБКА"
+            )
+        ):
+
+            bot.edit_message_text(
+                f"Ошибка:\n{meme_result}",
+                message.chat.id,
+                status_msg.message_id
+            )
+
         elif meme_result:
-            with open(meme_result, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, reply_to_message_id=message.message_id)
-            os.remove(meme_result)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        else:
-             bot.edit_message_text("Неизвестная ошибка мема.", message.chat.id, status_msg.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"Системная ошибка: {e}", message.chat.id, status_msg.message_id)
 
-@bot.message_handler(content_types=['text', 'photo', 'voice', 'audio'])
+            with open(
+                meme_result,
+                "rb"
+            ) as photo:
+
+                bot.send_photo(
+                    message.chat.id,
+                    photo,
+                    reply_to_message_id=message.message_id
+                )
+
+            try:
+                os.remove(
+                    meme_result
+                )
+            except Exception:
+                pass
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    status_msg.message_id
+                )
+            except Exception:
+                pass
+
+        else:
+
+            bot.edit_message_text(
+                "Неизвестная ошибка мема.",
+                message.chat.id,
+                status_msg.message_id
+            )
+
+    except Exception as e:
+
+        bot.edit_message_text(
+            f"Системная ошибка: {e}",
+            message.chat.id,
+            status_msg.message_id
+        )
+
+
+# ==========================================================
+# START
+# ==========================================================
+
+@bot.message_handler(
+    commands=["start"]
+)
+def send_welcome(message):
+
+    bot.reply_to(
+        message,
+        "Я на связи. "
+        "/draw — рисовать ИИ, "
+        "/video — сгенерировать видео, "
+        "/make_meme — мем, "
+        "/edit — фотошоп."
+    )
+
+
+# ==========================================================
+# GENERAL MESSAGE HANDLER
+# ==========================================================
+
+@bot.message_handler(
+    content_types=[
+        "text",
+        "photo",
+        "voice",
+        "audio"
+    ]
+)
 def handle_message(message):
+
+    # /edit обрабатывается отдельно
     if is_edit_message(message):
         return
 
-    # /edit уже обработан отдельным обработчиком.
-    incoming_text = (message.text or message.caption or "").strip()
-    if incoming_text.lower().startswith("/edit"):
+    incoming_text = (
+        message.text
+        or message.caption
+        or ""
+    ).strip()
+
+    if incoming_text.lower().startswith(
+        "/edit"
+    ):
         return
 
     chat_id = message.chat.id
-    user_name = message.from_user.first_name or "Аноним"
-    text = message.text or message.caption or ""
-    text = text.strip()
 
-    if message.chat.type in ['group', 'supergroup'] and text and not text.startswith('/'):
+    user_name = (
+        message.from_user.first_name
+        or "Аноним"
+    )
+
+    text = (
+        message.text
+        or message.caption
+        or ""
+    ).strip()
+
+    # ------------------------------------------------------
+    # Group history
+    # ------------------------------------------------------
+
+    if (
+        message.chat.type
+        in ["group", "supergroup"]
+        and text
+        and not text.startswith("/")
+    ):
+
         if text not in chat_history:
-            chat_history.append(text)
+
+            chat_history.append(
+                text
+            )
+
             if len(chat_history) > HISTORY_LIMIT:
-                chat_history.pop(0)
+
+                chat_history.pop(
+                    0
+                )
+
+    # ------------------------------------------------------
+    # Dialog context
+    # ------------------------------------------------------
 
     if chat_id not in dialog_context:
+
         dialog_context[chat_id] = []
-    
-    log_text = text if text else "[Медиафайл]"
-    dialog_context[chat_id].append(f"{user_name}: {log_text}")
-    if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
-        dialog_context[chat_id].pop(0)
 
-    if message.chat.type in ['group', 'supergroup']:
-        is_mentioned = text and BOT_USERNAME in text
-        is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id
-        if not (is_mentioned or is_reply):
-            return
+    log_text = (
+        text
+        if text
+        else "[Медиафайл]"
+    )
 
-    bot.send_chat_action(chat_id, 'typing')
+    dialog_context[chat_id].append(
+        f"{user_name}: {log_text}"
+    )
 
-    try:
-        history_text = "\n".join(dialog_context[chat_id])
-        prompt = (
-            f"Вот последние сообщения в этом чате:\n{history_text}\n\n"
-            f"Основываясь на этом диалоге, ответь на последнее сообщение пользователя {user_name}."
+    if (
+        len(dialog_context[chat_id])
+        > CONTEXT_LIMIT
+    ):
+
+        dialog_context[chat_id].pop(
+            0
         )
 
-        gemini_contents = [prompt]
+    # ------------------------------------------------------
+    # Group mention / reply
+    # ------------------------------------------------------
+
+    if message.chat.type in [
+        "group",
+        "supergroup"
+    ]:
+
+        is_mentioned = (
+            text
+            and BOT_USERNAME.lower()
+            in text.lower()
+        )
+
+        is_reply = False
+
+        try:
+
+            is_reply = (
+                message.reply_to_message
+                and message.reply_to_message.from_user.id
+                == bot.get_me().id
+            )
+
+        except Exception:
+            pass
+
+        if not (
+            is_mentioned
+            or is_reply
+        ):
+
+            return
+
+    # ------------------------------------------------------
+    # Typing
+    # ------------------------------------------------------
+
+    bot.send_chat_action(
+        chat_id,
+        "typing"
+    )
+
+    try:
+
+        history_text = "\n".join(
+            dialog_context[chat_id]
+        )
+
+        prompt = (
+            "Вот последние сообщения "
+            "в этом чате:\n"
+            f"{history_text}\n\n"
+            f"Основываясь на этом диалоге, "
+            f"ответь на последнее сообщение "
+            f"пользователя {user_name}."
+        )
+
+        gemini_contents = [
+            prompt
+        ]
+
+        # --------------------------------------------------
+        # Photo
+        # --------------------------------------------------
 
         if message.photo:
-            file_id = message.photo[-1].file_id
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            image = Image.open(io.BytesIO(downloaded_file))
-            gemini_contents.append(image)
 
-        elif message.voice or message.audio:
-            file_id = message.voice.file_id if message.voice else message.audio.file_id
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            mime_type = "audio/ogg" if message.voice else "audio/mpeg"
-            gemini_contents.append({"mime_type": mime_type, "data": downloaded_file})
+            file_id = (
+                message.photo[-1].file_id
+            )
 
-        response = model.generate_content(gemini_contents)
-        clean_reply = response.text.replace('*', '')
-        bot.reply_to(message, clean_reply)
-        
-        dialog_context[chat_id].append(f"читом бот: {clean_reply}")
-        if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
-            dialog_context[chat_id].pop(0)
-            
+            file_info = bot.get_file(
+                file_id
+            )
+
+            downloaded_file = (
+                bot.download_file(
+                    file_info.file_path
+                )
+            )
+
+            image = Image.open(
+                io.BytesIO(
+                    downloaded_file
+                )
+            )
+
+            gemini_contents.append(
+                image
+            )
+
+        # --------------------------------------------------
+        # Voice / Audio
+        # --------------------------------------------------
+
+        elif (
+            message.voice
+            or message.audio
+        ):
+
+            file_id = (
+                message.voice.file_id
+                if message.voice
+                else message.audio.file_id
+            )
+
+            file_info = bot.get_file(
+                file_id
+            )
+
+            downloaded_file = (
+                bot.download_file(
+                    file_info.file_path
+                )
+            )
+
+            mime_type = (
+                "audio/ogg"
+                if message.voice
+                else "audio/mpeg"
+            )
+
+            gemini_contents.append(
+                {
+                    "mime_type": mime_type,
+                    "data": downloaded_file
+                }
+            )
+
+        # --------------------------------------------------
+        # Gemini
+        # --------------------------------------------------
+
+        response = model.generate_content(
+            gemini_contents
+        )
+
+        clean_reply = (
+            response.text
+            .replace("*", "")
+        )
+
+        bot.reply_to(
+            message,
+            clean_reply
+        )
+
+        dialog_context[chat_id].append(
+            f"читом бот: {clean_reply}"
+        )
+
+        if (
+            len(dialog_context[chat_id])
+            > CONTEXT_LIMIT
+        ):
+
+            dialog_context[chat_id].pop(
+                0
+            )
+
     except Exception as e:
-        print(f"Ошибка Gemini: {e}")
-        bot.reply_to(message, f"Мой клубок запутался. Ошибка: {e}")
 
-class DummyHandler(BaseHTTPRequestHandler):
+        print(
+            f"Ошибка Gemini: {e}"
+        )
+
+        bot.reply_to(
+            message,
+            f"Мой клубок запутался. Ошибка: {e}"
+        )
+
+
+# ==========================================================
+# RENDER / HEALTH CHECK SERVER
+# ==========================================================
+
+class DummyHandler(
+    BaseHTTPRequestHandler
+):
+
     def do_GET(self):
-        self.send_response(200)
+
+        self.send_response(
+            200
+        )
+
         self.end_headers()
-        self.wfile.write(b'Bot with Fal Video Generation is running!')
+
+        self.wfile.write(
+            b"Chaitom bot with Veo 3.1 Fast is running!"
+        )
+
+    def do_HEAD(self):
+
+        self.send_response(
+            200
+        )
+
+        self.end_headers()
+
+    def log_message(
+        self,
+        format,
+        *args
+    ):
+        return
+
 
 def run_dummy_server():
-    port = int(os.environ.get('PORT', 10000))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
+
+    server = HTTPServer(
+        (
+            "0.0.0.0",
+            port
+        ),
+        DummyHandler
+    )
+
+    print(
+        f"Health server running on port {port}"
+    )
+
     server.serve_forever()
 
-threading.Thread(target=run_dummy_server, daemon=True).start()
 
-if __name__ == '__main__':
-    print("Читом бот запущен (режим Fal Minimax Video)...")
+threading.Thread(
+    target=run_dummy_server,
+    daemon=True
+).start()
+
+
+# ==========================================================
+# RUN
+# ==========================================================
+
+if __name__ == "__main__":
+
+    print(
+        "Читом бот запущен."
+    )
+
+    print(
+        "Image: Nano Banana Pro"
+    )
+
+    print(
+        "Video: Veo 3.1 Fast"
+    )
+
     bot.infinity_polling()
