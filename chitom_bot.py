@@ -3,12 +3,15 @@ import os
 import threading
 import random
 import io
+import base64
+import re
 import json
 import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
+from google import genai as new_genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -19,6 +22,7 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 genai.configure(api_key=GEMINI_API_KEY)
+image_client = new_genai.Client(api_key=GEMINI_API_KEY)
 
 TEMPLATE_NAME = 'template.jpg'
 FONT_NAME = 'arial.ttf'       
@@ -63,52 +67,79 @@ def draw_text_with_outline(draw, text, position, font, text_color="white", outli
         draw.text((x, y+adj), text, font=font, fill=outline_color)
     draw.text((x, y), text, font=font, fill=text_color)
 
+def get_aspect_ratio(width, height):
+    ratio = width / height
+    candidates = {
+        "1:1": 1.0,
+        "4:3": 4 / 3,
+        "3:4": 3 / 4,
+        "16:9": 16 / 9,
+        "9:16": 9 / 16,
+        "3:2": 3 / 2,
+        "2:3": 2 / 3,
+        "5:4": 5 / 4,
+        "4:5": 4 / 5,
+        "21:9": 21 / 9,
+    }
+    return min(candidates, key=lambda x: abs(candidates[x] - ratio))
+
+
 def edit_user_image(image_bytes, user_prompt):
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        draw = ImageDraw.Draw(img)
-        width, height = img.size
-        
-        prompt_lower = user_prompt.lower()
-        
-        text_to_draw = "CHITOM"
-        if "chitom" in prompt_lower:
-            text_to_draw = "CHITOM"
-        elif "читос" in prompt_lower:
-            text_to_draw = "ЧИТОС"
-        elif "бургер" in prompt_lower:
-            text_to_draw = "БУРГЕР"
-        elif user_prompt.strip():
-            words = user_prompt.split()
-            if len(words) > 1:
-                text_to_draw = " ".join(words[1:4]).upper()
+    """Настоящее image-to-image редактирование через Gemini Image."""
+    original = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    width, height = original.size
+    aspect_ratio = get_aspect_ratio(width, height)
 
-        if "invert" in prompt_lower or "инверт" in prompt_lower:
-            img = ImageOps.invert(img)
-        elif "bw" in prompt_lower or "чб" in prompt_lower or "черно" in prompt_lower:
-            img = img.convert('L').convert('RGB')
-        elif "flip" in prompt_lower or "перевер" in prompt_lower:
-            img = img.rotate(180)
-        elif "mirror" in prompt_lower or "зеркал" in prompt_lower:
-            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    edit_prompt = f"""
+Edit the provided image according to the user's instruction.
 
-        try:
-            font = ImageFont.truetype(FONT_NAME, int(height / 12))
-        except:
-            font = ImageFont.load_default()
+USER INSTRUCTION:
+{user_prompt}
 
-        x = width // 10
-        y = height // 10
-        draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
+Preserve the original subject, composition, camera angle, lighting,
+background and all details that the user did not ask to change.
+Make the requested modification directly to the provided image.
+Return the edited image, not a description of it.
+"""
 
-        bio = io.BytesIO()
-        img.save(bio, format='JPEG')
-        bio.seek(0)
-        bio.name = 'edited.jpg'
-        return bio
-    except Exception as e:
-        print(f"Ошибка изменения картинки: {e}")
-        return None
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    interaction = image_client.interactions.create(
+        model="gemini-3.1-flash-image",
+        input=[
+            {
+                "type": "image",
+                "data": image_b64,
+                "mime_type": "image/jpeg",
+            },
+            {
+                "type": "text",
+                "text": edit_prompt,
+            },
+        ],
+        response_format={
+            "type": "image",
+            "mime_type": "image/jpeg",
+            "aspect_ratio": aspect_ratio,
+        },
+    )
+
+    output_image = getattr(interaction, "output_image", None)
+    if output_image and getattr(output_image, "data", None):
+        result = io.BytesIO(base64.b64decode(output_image.data))
+        result.name = "edited.jpg"
+        result.seek(0)
+        return result
+
+    for step in getattr(interaction, "steps", []) or []:
+        for block in getattr(step, "content", []) or []:
+            if getattr(block, "type", None) == "image" and getattr(block, "data", None):
+                result = io.BytesIO(base64.b64decode(block.data))
+                result.name = "edited.jpg"
+                result.seek(0)
+                return result
+
+    raise RuntimeError("Gemini не вернул изменённое изображение.")
 
 def text_wrap(text, font, max_width):
     lines = []
@@ -266,76 +297,89 @@ def draw_command(message):
 # ==========================================================
 
 # ================= РЕДАКТИРОВАНИЕ КАРТИНОК ЧЕРЕЗ NANO BANANA =================
-@bot.message_handler(commands=['edit'], content_types=['text', 'photo'])
+@bot.message_handler(
+    commands=['edit'],
+    content_types=['text', 'photo']
+)
 def edit_command(message):
-    # Понимаем, где фотка: прикреплена прямо к сообщению или это реплай на другое сообщение
+    # Вариант 1: фото прикреплено прямо к /edit.
+    # Вариант 2: /edit отправлен reply на уже существующее фото.
     target_message = message if message.photo else message.reply_to_message
-    
+
     if not target_message or not target_message.photo:
-        bot.reply_to(message, "Прикрепи картинку с подписью или сделай реплай на фото с командой /edit [что сделать].")
+        bot.reply_to(
+            message,
+            "Прикрепи изображение к /edit или сделай reply на фото.\n\n"
+            "Пример:\n"
+            "/edit сделай из него киборга"
+        )
         return
 
-    # Достаем текст из чистого сообщения или из подписи к фото
-    raw_text = message.text or message.caption or ""
-    user_prompt = raw_text.replace('/edit', '').strip()
-    
+    raw_text = message.caption if message.photo else message.text
+    raw_text = raw_text or ""
+
+    user_prompt = re.sub(
+        r"^/edit(?:@\w+)?\s*",
+        "",
+        raw_text.strip(),
+        count=1,
+        flags=re.IGNORECASE
+    ).strip()
+
     if not user_prompt:
-        bot.reply_to(message, "Напиши, как изменить фотку! Например: /edit сделай его киборгом")
+        bot.reply_to(
+            message,
+            "Напиши промпт для редактирования.\n"
+            "Например: /edit добавь ему очки"
+        )
         return
 
-    status_msg = bot.reply_to(message, "Скармливаю фотку глазам Gemini. Анализирую...")
+    status = bot.reply_to(
+        message,
+        "Редактирую изображение..."
+    )
 
     try:
-        # 1. Скачиваем фото из Телеграма
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        image = Image.open(io.BytesIO(downloaded_file))
+        image_bytes = bot.download_file(file_info.file_path)
 
-        # 2. ХИТРЫЙ ЧИТОМ: Просим зрение Gemini описать новую картинку
-        vision_prompt = (
-            f"Describe this image in extreme detail, but apply the following transformation to the description: '{user_prompt}'. "
-            "Output ONLY a raw, highly detailed English prompt for a text-to-image AI model. Do not add any conversational text."
+        edited_photo = edit_user_image(
+            image_bytes,
+            user_prompt
         )
-        
-        vision_model = genai.GenerativeModel('gemini-1.5-flash')
-        vision_response = vision_model.generate_content([vision_prompt, image])
-        final_english_prompt = vision_response.text.strip()
-        
-        bot.edit_message_text("Промпт готов. Запускаю движок Nano Banana 2...", message.chat.id, status_msg.message_id)
+        edited_photo.seek(0)
 
-        # 3. Отправляем промпт в Nano Banana
-        if hasattr(genai, 'ImageGenerationModel'):
-            imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
-            result = imagen.generate_images(
-                prompt=final_english_prompt,
-                number_of_images=1,
-                aspect_ratio="1:1"
+        try:
+            bot.delete_message(
+                message.chat.id,
+                status.message_id
             )
-            image_data = result.images[0]._image_bytes
-            
-            # ОТПРАВЛЯЕМ ТОЛЬКО ФОТО (без подписей и текстов)
-            bot.send_photo(message.chat.id, image_data, reply_to_message_id=message.message_id)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-            return
-        else:
-            raise Exception("Библиотека Google устарела, Nano Banana не найден!")
+        except Exception:
+            pass
+
+        # ОТПРАВЛЯЕМ ИМЕННО ИЗМЕНЁННУЮ КАРТИНКУ.
+        bot.send_photo(
+            chat_id=message.chat.id,
+            photo=edited_photo,
+            reply_to_message_id=message.message_id
+        )
+
+        print("EDIT: изменённая картинка отправлена")
 
     except Exception as e:
-        # ЗАПАСНОЙ ПЛАН
+        print("EDIT ERROR:", repr(e))
         try:
-            bot.edit_message_text("Nano Banana подавилась. Врубаю резервный генератор...", message.chat.id, status_msg.message_id)
-            
-            seed = random.randint(1, 1000000)
-            safe_prompt = urllib.parse.quote(final_english_prompt if 'final_english_prompt' in locals() else user_prompt)
-            final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
-            
-            # ОТПРАВЛЯЕМ ТОЛЬКО ФОТО ИЗ РЕЗЕРВА
-            bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        except Exception as backup_e:
-            bot.edit_message_text(f"Оба мольберта сломались: {e}", message.chat.id, status_msg.message_id)
-# =================================================================================================
+            bot.edit_message_text(
+                f"Ошибка редактирования: {e}",
+                message.chat.id,
+                status.message_id
+            )
+        except Exception:
+            bot.send_message(
+                message.chat.id,
+                f"Ошибка редактирования: {e}"
+            )
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -367,6 +411,11 @@ def make_meme_command(message):
 
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'audio'])
 def handle_message(message):
+    # /edit уже обработан отдельным обработчиком.
+    incoming_text = (message.text or message.caption or "").strip()
+    if incoming_text.lower().startswith("/edit"):
+        return
+
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Аноним"
     text = message.text or message.caption or ""
