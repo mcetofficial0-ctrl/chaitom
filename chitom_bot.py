@@ -4,6 +4,10 @@ import threading
 import random
 import time
 import io
+import cv2
+import numpy as np
+import json
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
@@ -57,50 +61,297 @@ def draw_text_with_outline(draw, text, position, font, text_color="white", outli
         draw.text((x, y+adj), text, font=font, fill=outline_color)
     draw.text((x, y), text, font=font, fill=text_color)
 
-def edit_user_image(image_bytes, user_prompt):
-    """Изменяет картинку и возвращает её прямо в оперативную память (BytesIO)"""
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        draw = ImageDraw.Draw(img)
-        width, height = img.size
-        
-        prompt_lower = user_prompt.lower()
-        
-        text_to_draw = "CHITOM"
-        if "chitom" in prompt_lower:
-            text_to_draw = "CHITOM"
-        elif "читос" in prompt_lower:
-            text_to_draw = "ЧИТОС"
-        elif "root beer" in prompt_lower:
-            text_to_draw = "CHITOM"
-        elif user_prompt.strip():
-            words = user_prompt.split()
-            if len(words) > 1:
-                text_to_draw = " ".join(words[1:4]).upper()
+def find_text_area_with_gemini(image, old_text):
+    """
+    Gemini определяет координаты старой надписи.
+    Возвращает [x1, y1, x2, y2].
+    """
 
-        if "invert" in prompt_lower or "инверт" in prompt_lower:
-            img = ImageOps.invert(img)
-        elif "bw" in prompt_lower or "чб" in prompt_lower:
-            img = img.convert('L').convert('RGB')
-        elif "flip" in prompt_lower or "перевер" in prompt_lower:
-            img = img.rotate(180)
+    prompt = f"""
+Посмотри на это изображение.
+
+Найди на изображении текст:
+"{old_text}"
+
+Мне нужны координаты ПРЯМОУГОЛЬНИКА, который полностью покрывает
+этот текст вместе с небольшим запасом по краям.
+
+Верни ТОЛЬКО JSON:
+{{"x1": 0, "y1": 0, "x2": 100, "y2": 100}}
+
+Координаты должны быть в пикселях относительно изображения.
+Не добавляй никаких пояснений.
+"""
+
+    try:
+        response = model.generate_content([
+            prompt,
+            image
+        ])
+
+        result = response.text.strip()
+
+        # Убираем ```json если Gemini их добавил
+        result = result.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(result)
+
+        return [
+            int(data["x1"]),
+            int(data["y1"]),
+            int(data["x2"]),
+            int(data["y2"])
+        ]
+
+    except Exception as e:
+        print("Ошибка определения текста:", e)
+        return None
+
+
+def remove_text_from_image(img, bbox):
+    """
+    Удаляет область со старым текстом при помощи OpenCV inpainting.
+    """
+
+    x1, y1, x2, y2 = bbox
+
+    height, width = img.shape[:2]
+
+    # Ограничиваем координаты размерами картинки
+    x1 = max(0, min(x1, width - 1))
+    x2 = max(0, min(x2, width))
+    y1 = max(0, min(y1, height - 1))
+    y2 = max(0, min(y2, height))
+
+    if x2 <= x1 or y2 <= y1:
+        return img
+
+    # Немного расширяем область,
+    # чтобы края старой надписи тоже исчезли
+    padding = max(4, int(min(width, height) * 0.01))
+
+    x1 = max(0, x1 - padding)
+    y1 = max(0, y1 - padding)
+    x2 = min(width, x2 + padding)
+    y2 = min(height, y2 + padding)
+
+    # Создаём маску
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    # Белая область = удалить
+    mask[y1:y2, x1:x2] = 255
+
+    # Inpainting восстанавливает фон по окружающим пикселям
+    result = cv2.inpaint(
+        img,
+        mask,
+        5,
+        cv2.INPAINT_TELEA
+    )
+
+    return result
+
+
+def edit_user_image(image_bytes, user_prompt):
+    """
+    Убирает старую надпись и вписывает новую.
+    """
+
+    try:
+        # Открываем изображение
+        pil_img = Image.open(
+            io.BytesIO(image_bytes)
+        ).convert("RGB")
+
+        # -----------------------------------------
+        # Определяем старый и новый текст
+        # -----------------------------------------
+
+        prompt_lower = user_prompt.lower()
+
+        old_text = None
+        new_text = None
+
+        # Пример:
+        # "замени надпись root beer на chitom"
+        match = re.search(
+            r'(?:замени|поменяй|заменить)\s+'
+            r'(?:надпись\s+)?["«]?(.+?)["»]?\s+'
+            r'(?:на|на\s+надпись)\s+["«]?(.+?)["»]?$',
+            user_prompt,
+            re.IGNORECASE
+        )
+
+        if match:
+            old_text = match.group(1).strip()
+            new_text = match.group(2).strip()
+
+        # Более простой вариант
+        if not old_text:
+            match = re.search(
+                r'(.+?)\s+на\s+(.+)',
+                user_prompt,
+                re.IGNORECASE
+            )
+
+            if match:
+                old_text = match.group(1).strip()
+                new_text = match.group(2).strip()
+
+                old_text = re.sub(
+                    r'^(замени|поменяй|заменить)\s+',
+                    '',
+                    old_text,
+                    flags=re.IGNORECASE
+                )
+
+                old_text = re.sub(
+                    r'^надпись\s+',
+                    '',
+                    old_text,
+                    flags=re.IGNORECASE
+                )
+
+        if not old_text or not new_text:
+            print("Не удалось определить старый/новый текст")
+            return None
+
+        print("Старый текст:", old_text)
+        print("Новый текст:", new_text)
+
+        # -----------------------------------------
+        # Gemini ищет старую надпись
+        # -----------------------------------------
+
+        bbox = find_text_area_with_gemini(
+            pil_img,
+            old_text
+        )
+
+        if not bbox:
+            print("Gemini не нашёл надпись")
+            return None
+
+        print("Координаты текста:", bbox)
+
+        # -----------------------------------------
+        # PIL -> OpenCV
+        # -----------------------------------------
+
+        img = np.array(pil_img)
+
+        # RGB -> BGR
+        img = cv2.cvtColor(
+            img,
+            cv2.COLOR_RGB2BGR
+        )
+
+        # -----------------------------------------
+        # Удаляем старый текст
+        # -----------------------------------------
+
+        img = remove_text_from_image(
+            img,
+            bbox
+        )
+
+        # BGR -> RGB
+        img = cv2.cvtColor(
+            img,
+            cv2.COLOR_BGR2RGB
+        )
+
+        result_img = Image.fromarray(img)
+
+        # -----------------------------------------
+        # Рисуем новую надпись
+        # -----------------------------------------
+
+        draw = ImageDraw.Draw(result_img)
+
+        width, height = result_img.size
+
+        x1, y1, x2, y2 = bbox
+
+        text_width = x2 - x1
+        text_height = y2 - y1
+
+        # Размер шрифта примерно соответствует старой надписи
+        font_size = max(
+            12,
+            int(text_height * 0.8)
+        )
 
         try:
-            font = ImageFont.truetype(FONT_NAME, int(height / 12))
-        except:
+            font = ImageFont.truetype(
+                FONT_NAME,
+                font_size
+            )
+        except Exception:
             font = ImageFont.load_default()
 
-        x = width // 6
-        y = height // 3
-        draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
+        # Подгоняем размер шрифта под старую область
+        while (
+            font_size > 10 and
+            draw.textbbox(
+                (0, 0),
+                new_text,
+                font=font
+            )[2] > text_width
+        ):
+            font_size -= 1
 
-        # Сохраняем в оперативную память вместо диска
+            try:
+                font = ImageFont.truetype(
+                    FONT_NAME,
+                    font_size
+                )
+            except:
+                font = ImageFont.load_default()
+                break
+
+        # Получаем размеры новой надписи
+        bbox_text = draw.textbbox(
+            (0, 0),
+            new_text,
+            font=font
+        )
+
+        new_width = bbox_text[2] - bbox_text[0]
+        new_height = bbox_text[3] - bbox_text[1]
+
+        # Центрируем новую надпись там,
+        # где была старая
+        text_x = x1 + (text_width - new_width) / 2
+        text_y = y1 + (text_height - new_height) / 2
+
+        draw_text_with_outline(
+            draw,
+            new_text.upper(),
+            (text_x, text_y),
+            font,
+            text_color="yellow",
+            outline_color="black"
+        )
+
+        # -----------------------------------------
+        # Возвращаем BytesIO
+        # -----------------------------------------
+
         bio = io.BytesIO()
-        img.save(bio, format='JPEG')
+
+        result_img.save(
+            bio,
+            format="JPEG",
+            quality=95
+        )
+
         bio.seek(0)
+
         return bio
+
     except Exception as e:
-        print(f"Ошибка изменения картинки: {e}")
+        print("Ошибка изменения картинки:", repr(e))
         return None
 
 def text_wrap(text, font, max_width):
@@ -160,82 +411,94 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
-    target_message = message.reply_to_message if message.reply_to_message else message
+    print("=== EDIT COMMAND ===")
+
+    target_message = (
+        message.reply_to_message
+        if message.reply_to_message
+        else message
+    )
 
     if not target_message.photo:
         bot.reply_to(
             message,
-            "Сделай реплай на картинку с командой /edit и напиши, что изменить "
-            "(например: /edit замени надпись на chitom)"
+            "Сделай реплай на картинку и напиши:\n"
+            "/edit замени надпись root beer на chitom"
         )
         return
 
-    user_prompt = message.text.replace('/edit', '', 1).strip()
+    user_prompt = message.text.replace(
+        '/edit',
+        '',
+        1
+    ).strip()
 
     if not user_prompt:
-        bot.reply_to(message, "Напиши, что именно изменить на картинке.")
+        bot.reply_to(
+            message,
+            "Напиши, какую надпись заменить."
+        )
         return
 
     status_msg = bot.reply_to(
         message,
-        "Включаю астральный фотошоп, переделываю картинку..."
+        "Ищу старую надпись и аккуратно стираю её..."
     )
 
     try:
-        # Получаем оригинальную картинку
+        # Получаем картинку
         file_id = target_message.photo[-1].file_id
-        file_info = bot.get_file(file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
 
-        # Изменяем картинку
-        photo_bio = edit_user_image(downloaded_file, user_prompt)
+        file_info = bot.get_file(file_id)
+
+        downloaded_file = bot.download_file(
+            file_info.file_path
+        )
+
+        # Редактируем
+        photo_bio = edit_user_image(
+            downloaded_file,
+            user_prompt
+        )
 
         if not photo_bio:
             bot.edit_message_text(
-                "Не удалось изменить картинку.",
+                "Не получилось найти старую надпись 😵",
                 message.chat.id,
                 status_msg.message_id
             )
             return
 
-        # Генерируем комментарий
-        response = model.generate_content([
-            f"Пользователь прислал картинку и попросил её изменить: '{user_prompt}'. "
-            f"Напиши короткий фирменный едкий комментарий в стиле лора. "
-            f"Упомяни бастурму, клубок и кого-нибудь из знакомых."
-        ])
-
-        comment_text = response.text.replace('*', '').strip()
-
-        # Отправляем изменённую картинку ОДНИМ сообщением
+        # Отправляем НОВУЮ изменённую картинку
         photo_bio.seek(0)
 
         bot.send_photo(
-            message.chat.id,
-            photo_bio,
-            caption=comment_text,
+            chat_id=message.chat.id,
+            photo=photo_bio,
             reply_to_message_id=message.message_id
         )
 
-        # Удаляем сообщение "обрабатываю..."
+        # Удаляем статус
         bot.delete_message(
             message.chat.id,
             status_msg.message_id
         )
 
+        print("=== EDIT SUCCESS ===")
+
     except Exception as e:
-        print(f"Ошибка /edit: {e}")
+        print("EDIT ERROR:", repr(e))
 
         try:
             bot.edit_message_text(
-                f"Ошибка обработки: {e}",
+                f"Ошибка редактирования:\n{e}",
                 message.chat.id,
                 status_msg.message_id
             )
-        except Exception:
+        except:
             bot.send_message(
                 message.chat.id,
-                f"Ошибка обработки: {e}"
+                f"Ошибка редактирования:\n{e}"
             )
 
 @bot.message_handler(commands=['make_meme'])
