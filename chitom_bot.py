@@ -1,18 +1,19 @@
 import telebot
-import google.generativeai as genai
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from groq import Groq
 
 # Получаем ключи из переменных окружения
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-# Замените на реальный юзернейм вашего бота (с собачкой в начале)
-BOT_USERNAME = '@chaitom_bot'
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY') # Новый ключ!
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-3.6-flash')
+# Подключаемся к Groq
+client = Groq(api_key=GROQ_API_KEY)
+
+# Замените на реальный юзернейм вашего бота (с собачкой в начале)
+BOT_USERNAME = '@chaitom_bot' 
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
 Твоя главная и нерушимая задача: в каждом, абсолютно в каждом своем ответе пользователю 
@@ -22,31 +23,34 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привет! Я читом бот на базе Gemini. Напиши мне что-нибудь, и я отвечу!")
+    bot.reply_to(message, "Привет! Я читом бот на базе сверхбыстрого Groq. Напиши мне что-нибудь, и я отвечу!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    # Если сообщение пришло из группы или супергруппы
+    # Логика для работы в группах
     if message.chat.type in ['group', 'supergroup']:
-        # 1. Проверяем, упомянули ли бота в тексте
         is_mentioned = message.text and BOT_USERNAME in message.text
-        
-        # 2. Проверяем, ответили ли на сообщение самого бота (реплай)
         is_reply = False
         if message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id:
             is_reply = True
-            
-        # Если бота не упоминали и ему не отвечали — просто игнорируем сообщение
         if not (is_mentioned or is_reply):
             return
 
-    # Если мы дошли сюда, значит нужно отвечать!
     try:
-        full_prompt = f"{SYSTEM_PROMPT}\n\nСообщение пользователя: {message.text}"
-        response = model.generate_content(full_prompt)
+        # Отправляем запрос нейросети LLaMA 3 через Groq
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": message.text}
+            ],
+            model="llama3-8b-8192", # Это легкая, быстрая и бесплатная модель
+        )
+        
+        # Получаем ответ
+        response_text = chat_completion.choices[0].message.content
         
         # Вырезаем звездочки
-        clean_reply = response.text.replace('*', '')
+        clean_reply = response_text.replace('*', '')
         bot.reply_to(message, clean_reply)
         
     except Exception as e:
@@ -59,18 +63,16 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot is running!')
+        self.wfile.write(b'Bot is running on Groq!')
 
 def run_dummy_server():
-    # Render сам задает переменную PORT, мы берем ее или 10000 по умолчанию
     port = int(os.environ.get('PORT', 10000))
     server = HTTPServer(('0.0.0.0', port), DummyHandler)
     server.serve_forever()
 
-# Запускаем фейковый сервер в отдельном потоке, чтобы он не мешал боту
 threading.Thread(target=run_dummy_server, daemon=True).start()
 # ==========================================
 
 if __name__ == '__main__':
-    print("Умный Читом бот запущен...")
+    print("Умный Читом бот (Groq) запущен...")
     bot.infinity_polling()
