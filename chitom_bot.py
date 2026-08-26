@@ -43,7 +43,7 @@ def handle_message(message):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": message.text}
             ],
-            model="llama-3.3-70b-versatile", # Это легкая, быстрая и бесплатная модель
+            model="qwen/qwen3.8-27b", # Это легкая, быстрая и бесплатная модель
         )
         
         # Получаем ответ
