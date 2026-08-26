@@ -265,31 +265,73 @@ def draw_command(message):
         bot.edit_message_text("Все мольберты сгорели нахрен. Попробуй позже.", message.chat.id, status_msg.message_id)
 # ==========================================================
 
+# ================= РЕДАКТИРОВАНИЕ КАРТИНОК ЧЕРЕЗ NANO BANANA (GEMINI VISION + IMAGEN) =================
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
     target_message = message.reply_to_message if message.reply_to_message else message
     
     if not target_message.photo:
-        bot.reply_to(message, "Сделай реплай на фото с командой /edit [что сделать/написать]")
+        bot.reply_to(message, "Сделай реплай на фото с командой /edit [что сделать].")
         return
 
     user_prompt = message.text.replace('/edit', '').strip()
-    status_msg = bot.reply_to(message, "Применяю фильтры...")
+    if not user_prompt:
+        bot.reply_to(message, "Напиши, как изменить фотку! Например: /edit сделай его киборгом")
+        return
+
+    status_msg = bot.reply_to(message, "Скармливаю фотку глазам Gemini. Анализирую астральные слои...")
 
     try:
+        # 1. Скачиваем фото из Телеграма
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
+        image = Image.open(io.BytesIO(downloaded_file))
 
-        photo_bio = edit_user_image(downloaded_file, user_prompt)
+        # 2. ХИТРЫЙ ЧИТОМ: Просим зрение Gemini описать новую картинку
+        vision_prompt = (
+            f"Describe this image in extreme detail, but apply the following transformation to the description: '{user_prompt}'. "
+            "Output ONLY a raw, highly detailed English prompt for a text-to-image AI model. Do not add any conversational text."
+        )
+        
+        # Используем чистую модель без лора бота, чтобы в промпт случайно не попала "бастурма"
+        vision_model = genai.GenerativeModel('gemini-1.5-flash')
+        vision_response = vision_model.generate_content([vision_prompt, image])
+        final_english_prompt = vision_response.text.strip()
+        
+        bot.edit_message_text("Промпт готов. Запускаю движок Nano Banana 2 (Imagen)...", message.chat.id, status_msg.message_id)
 
-        if photo_bio:
-            bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
+        # 3. Отправляем сгенерированный промпт в Nano Banana (Imagen 3)
+        if hasattr(genai, 'ImageGenerationModel'):
+            imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
+            result = imagen.generate_images(
+                prompt=final_english_prompt,
+                number_of_images=1,
+                aspect_ratio="1:1"
+            )
+            image_data = result.images[0]._image_bytes
+            
+            bot.send_photo(message.chat.id, image_data, reply_to_message_id=target_message.message_id)
             bot.delete_message(message.chat.id, status_msg.message_id)
+            return
         else:
-            bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
+            raise Exception("Библиотека Google устарела, Nano Banana не найден!")
+
     except Exception as e:
-        bot.edit_message_text(f"Системная ошибка: {e}", message.chat.id, status_msg.message_id)
+        # ЗАПАСНОЙ ПЛАН
+        try:
+            bot.edit_message_text("Nano Banana подавилась. Врубаю резервный генератор...", message.chat.id, status_msg.message_id)
+            
+            seed = random.randint(1, 1000000)
+            # Если промпт успел сгенерироваться - берем его, иначе берем текст юзера
+            safe_prompt = urllib.parse.quote(final_english_prompt if 'final_english_prompt' in locals() else user_prompt)
+            final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
+            
+            bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=target_message.message_id)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+        except Exception as backup_e:
+            bot.edit_message_text(f"Оба мольберта сломались: {e}", message.chat.id, status_msg.message_id)
+# =================================================================================================
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
