@@ -394,39 +394,155 @@ def video_command(message):
     threading.Thread(target=background_video_task, daemon=True).start()
 # --------------------------------------------------
 
-# ================= NANO BANANA 2 (IMAGEN) =================
+# ================= DRAW — NANO BANANA PRO =================
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
     prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
+
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать, епта. Например: /draw бастурма")
+        bot.reply_to(
+            message,
+            "Напиши, что нарисовать. Например: /draw киберпанк-город ночью"
+        )
         return
 
-    status_msg = bot.reply_to(message, "Подключаю движок Nano Banana 2...")
+    status_msg = bot.reply_to(
+        message,
+        "🍌 Nano Banana Pro рисует..."
+    )
 
     try:
-        if hasattr(genai, 'ImageGenerationModel'):
-            imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
-            result = imagen.generate_images(
-                prompt=prompt,
-                number_of_images=1,
-                aspect_ratio="1:1"
+        # Более мощная модель для генерации изображений
+        response = image_client.models.generate_content(
+            model="gemini-3-pro-image",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                response_format={
+                    "image": {
+                        "aspect_ratio": "1:1",
+                        "image_size": "2K"
+                    }
+                }
             )
-            image_data = result.images[0]._image_bytes
-            bot.send_photo(message.chat.id, image_data, reply_to_message_id=message.message_id)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-            return
-    except Exception as e:
-        print(f"Nano Banana 2 отдыхает: {e}. Перехожу на запасной мольберт.")
+        )
 
-    try:
-        seed = random.randint(1, 1000000)
-        safe_prompt = urllib.parse.quote(prompt)
-        final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
-        bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
-        bot.delete_message(message.chat.id, status_msg.message_id)
+        image_bytes = None
+
+        # Ищем изображение в ответе
+        for part in response.parts:
+            if getattr(part, "inline_data", None):
+                inline_data = part.inline_data
+
+                if inline_data.data:
+                    image_bytes = inline_data.data
+                    break
+
+        if not image_bytes:
+            raise RuntimeError(
+                "Nano Banana Pro не вернула изображение."
+            )
+
+        # На случай, если SDK вернул base64-строку
+        if isinstance(image_bytes, str):
+            image_bytes = base64.b64decode(image_bytes)
+
+        output = io.BytesIO(image_bytes)
+        output.seek(0)
+        output.name = "generated.png"
+
+        # Удаляем сообщение "рисует..."
+        try:
+            bot.delete_message(
+                message.chat.id,
+                status_msg.message_id
+            )
+        except Exception:
+            pass
+
+        # Отправляем именно картинку
+        bot.send_photo(
+            chat_id=message.chat.id,
+            photo=output,
+            reply_to_message_id=message.message_id
+        )
+
+        print("DRAW: Nano Banana Pro image sent")
+
     except Exception as e:
-        bot.edit_message_text("Все мольберты сгорели нахрен. Попробуй позже.", message.chat.id, status_msg.message_id)
+        print("DRAW ERROR:", repr(e))
+
+        # Запасной вариант — Nano Banana 2
+        try:
+            print("DRAW: пробую Nano Banana 2...")
+
+            response = image_client.models.generate_content(
+                model="gemini-3.1-flash-image",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    response_format={
+                        "image": {
+                            "aspect_ratio": "1:1",
+                            "image_size": "2K"
+                        }
+                    }
+                )
+            )
+
+            image_bytes = None
+
+            for part in response.parts:
+                if getattr(part, "inline_data", None):
+                    if part.inline_data.data:
+                        image_bytes = part.inline_data.data
+                        break
+
+            if not image_bytes:
+                raise RuntimeError(
+                    "Nano Banana 2 тоже не вернула изображение."
+                )
+
+            if isinstance(image_bytes, str):
+                image_bytes = base64.b64decode(image_bytes)
+
+            output = io.BytesIO(image_bytes)
+            output.seek(0)
+            output.name = "generated.png"
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    status_msg.message_id
+                )
+            except Exception:
+                pass
+
+            bot.send_photo(
+                chat_id=message.chat.id,
+                photo=output,
+                reply_to_message_id=message.message_id
+            )
+
+            print("DRAW: Nano Banana 2 fallback sent")
+
+        except Exception as fallback_error:
+            print(
+                "DRAW FALLBACK ERROR:",
+                repr(fallback_error)
+            )
+
+            try:
+                bot.edit_message_text(
+                    "🍌 Банан сломался. Попробуй ещё раз позже.",
+                    message.chat.id,
+                    status_msg.message_id
+                )
+            except Exception:
+                bot.send_message(
+                    message.chat.id,
+                    "Ошибка генерации изображения."
+                )
 # ==========================================================
 
 # ================= РЕДАКТИРОВАНИЕ КАРТИНОК =================
