@@ -3,6 +3,7 @@ import os
 import threading
 import random
 import time
+import io  # НОВОЕ: нужно для работы с картинками и аудио в оперативной памяти
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile
@@ -22,15 +23,14 @@ RESULT_NAME = 'meme_result.jpg'
 # Обязательно замените на юзернейм вашего бота
 BOT_USERNAME = '@chaitom_bot' 
 
-# Хранилище для мемов (только текст)
+# НОВОЕ: Увеличенный архив для мемодела (хранит 1000 фраз!)
 chat_history = []
-HISTORY_LIMIT = 200
+HISTORY_LIMIT = 1000
 
-# НОВОЕ: Хранилище контекста для понимания диалога (с именами и ответами бота)
+# Хранилище контекста диалога
 dialog_context = {}
 CONTEXT_LIMIT = 15
 
-# Отключаем цензуру для черного юмора
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -39,7 +39,7 @@ safety_settings = [
 ]
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
-Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента.
+Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЕПЕРЬ ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И СЛУШАТЬ АУДИО. Описывай то, что видишь или слышишь, через призму своего безумного характера.
 
 ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР:
 1. Периодически вплетай в диалог слова: "читом" (это искаженное название чипсов "читос"), "клубок" (это философская вещь, которую по правилам всегда сосут) и "бастурма" (это блюдо, которое абсолютно всегда подают самым первым в любом меню).
@@ -112,7 +112,7 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я проснулся. Готов обсуждать бастурму, клубки и философские проблемы Степана.")
+    bot.reply_to(message, "Я проснулся. Умею читать, смотреть картинки, слушать голосовые и разматывать клубки.")
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -121,7 +121,7 @@ def make_meme_command(message):
         return
 
     if len(chat_history) < 2:
-        bot.reply_to(message, "В истории пока слишком мало сообщений. Пообщайтесь ещё немного!")
+        bot.reply_to(message, f"В истории пока маловато фраз ({len(chat_history)}). Пишите еще!")
         return
 
     status_msg = bot.reply_to(message, "Разматываю клубок истории, сейчас будет мем...")
@@ -142,61 +142,89 @@ def make_meme_command(message):
     except Exception as e:
         bot.edit_message_text(f"Системная ошибка: {e}", message.chat.id, status_msg.message_id)
 
-@bot.message_handler(func=lambda message: True)
+# НОВОЕ: Обработчик теперь ловит текст, фото и аудио/голосовые сообщения
+@bot.message_handler(content_types=['text', 'photo', 'voice', 'audio'])
 def handle_message(message):
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Аноним"
-    text = message.text.strip() if message.text else ""
+    
+    # Текст может быть в самом сообщении или в подписи к картинке
+    text = message.text or message.caption or ""
+    text = text.strip()
 
-    # 1. Глобальный сбор фраз для мемов
+    # 1. Глобальный сбор фраз для мемов (сохраняем только текст)
     if message.chat.type in ['group', 'supergroup'] and text and not text.startswith('/'):
         if text not in chat_history:
             chat_history.append(text)
             if len(chat_history) > HISTORY_LIMIT:
                 chat_history.pop(0)
 
-    # 2. Локальный сбор контекста (кто и что сказал в этом чате)
+    # 2. Локальный сбор контекста (записываем, что человек скинул медиа)
     if chat_id not in dialog_context:
         dialog_context[chat_id] = []
     
-    if text:
-        dialog_context[chat_id].append(f"{user_name}: {text}")
-        if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
-            dialog_context[chat_id].pop(0)
+    log_text = text if text else "[Медиафайл]"
+    dialog_context[chat_id].append(f"{user_name}: {log_text}")
+    if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
+        dialog_context[chat_id].pop(0)
 
-    # 3. Проверка, позвали ли бота
+    # 3. Проверка, позвали ли бота (если скинули просто фото без текста, ответит, если это реплай)
     if message.chat.type in ['group', 'supergroup']:
         is_mentioned = text and BOT_USERNAME in text
         is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id
         if not (is_mentioned or is_reply):
             return
 
-    # 4. Отправляем контекст в Gemini
+    # Отправляем статус "печатает...", так как обработка медиа занимает время
+    bot.send_chat_action(chat_id, 'typing')
+
+    # 4. Обработка медиа и отправка в Gemini
     try:
         history_text = "\n".join(dialog_context[chat_id])
         prompt = (
-            f"Вот последние сообщения в этом чате (используй их для понимания контекста):\n{history_text}\n\n"
-            f"Основываясь на этом диалоге, ответь на последнее сообщение пользователя {user_name}."
+            f"Вот контекст диалога:\n{history_text}\n\n"
+            f"Ответь на последнее сообщение пользователя {user_name}."
         )
 
-        response = model.generate_content(prompt)
+        # Подготавливаем данные для нейросети (сначала всегда идет текст промпта)
+        gemini_contents = [prompt]
+
+        # Если в сообщении есть картинка, скачиваем ее и добавляем к запросу
+        if message.photo:
+            file_id = message.photo[-1].file_id  # Берем самое высокое качество
+            file_info = bot.get_file(file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            image = Image.open(io.BytesIO(downloaded_file))
+            gemini_contents.append(image)
+
+        # Если есть голосовое или аудио сообщение
+        elif message.voice or message.audio:
+            file_id = message.voice.file_id if message.voice else message.audio.file_id
+            file_info = bot.get_file(file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            mime_type = "audio/ogg" if message.voice else "audio/mpeg"
+            gemini_contents.append({"mime_type": mime_type, "data": downloaded_file})
+
+        # Отправляем весь пакет данных (текст + медиа) в Gemini
+        response = model.generate_content(gemini_contents)
         clean_reply = response.text.replace('*', '')
         bot.reply_to(message, clean_reply)
         
-        # Бот запоминает свой собственный ответ
+        # Бот запоминает свой ответ
         dialog_context[chat_id].append(f"читом бот: {clean_reply}")
         if len(dialog_context[chat_id]) > CONTEXT_LIMIT:
             dialog_context[chat_id].pop(0)
             
     except Exception as e:
         print(f"Ошибка Gemini: {e}")
+        bot.reply_to(message, f"Ой, мой клубок запутался при обработке этого файла. Ошибка: {e}")
 
 # ==========================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with context memory is running!')
+        self.wfile.write(b'Bot with Vision and Audio is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -206,5 +234,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот с памятью запущен...")
+    print("Читом бот с мультимодальностью запущен...")
     bot.infinity_polling()
