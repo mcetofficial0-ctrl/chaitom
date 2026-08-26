@@ -4,18 +4,28 @@ import threading
 import random
 import io
 import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
+from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
+from telebot.types import BotCommand
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
+
+# Инициализируем DALL-E 3 клиента
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception as e:
+        print(f"Ошибка подключения OpenAI: {e}")
 
 TEMPLATE_NAME = 'template.jpg'
 FONT_NAME = 'arial.ttf'       
@@ -160,48 +170,41 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля (FLUX), /make_meme — мем, /edit [текст] — фотошоп.")
+    bot.reply_to(message, "Я на связи. Элитный ИИ к твоим услугам.")
 
-# ================= ПУТЬ ПИРАТА: FLUX.1 + МАСКИРОВКА БРАУЗЕРА =================
+# ================= ПУТЬ МАЖОРА: DALL-E 3 =================
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
     prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать. Например: /draw сочный бургер киберпанк")
+        bot.reply_to(message, "Напиши, что нарисовать. Например: /draw золотой бургер с бриллиантами")
         return
 
-    status_msg = bot.reply_to(message, "Взламываю нейросети... Генерирую через топовый FLUX!")
+    if not openai_client:
+        bot.reply_to(message, "Эй, мажор! Ты забыл прописать OPENAI_API_KEY в настройках Render!")
+        return
+
+    status_msg = bot.reply_to(message, "Распаковываю элитные краски DALL-E 3. Рисую дорого и богато...")
 
     try:
-        seed = random.randint(1, 1000000)
-        safe_prompt = urllib.parse.quote(prompt)
-        
-        # СЕКРЕТНЫЙ ПАРАМЕТР: model=flux (переключает на самую мощную нейросеть)
-        url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
-        
-        # ПИРАТСКИЙ ТРЮК: Притворяемся обычным браузером Chrome с ПК, чтобы обойти блокировку
-        req = urllib.request.Request(
-            url, 
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'image/jpeg, image/png, image/webp, */*'
-            }
+        # Дергаем самую умную модель в мире
+        response = openai_client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
         )
+        # Получаем готовую ссылку на шедевр
+        image_url = response.data[0].url
         
-        # Скачиваем картинку в оперативную память
-        with urllib.request.urlopen(req, timeout=40) as response:
-            image_data = response.read()
-            
-        if image_data:
-            bot.send_photo(message.chat.id, image_data, reply_to_message_id=message.message_id)
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        else:
-            raise Exception("Пустой ответ от сервера")
+        bot.send_photo(message.chat.id, image_url, reply_to_message_id=message.message_id)
+        bot.delete_message(message.chat.id, status_msg.message_id)
             
     except Exception as e:
-        print(f"Ошибка Пиратского API: {e}")
-        bot.edit_message_text(f"Карамба! Астральный мольберт заклинило: {e}", message.chat.id, status_msg.message_id)
-# ==============================================================================
+        print(f"Ошибка Мажорного API: {e}")
+        bot.edit_message_text(f"Буржуйский мольберт сломался: {e}", message.chat.id, status_msg.message_id)
+# =========================================================
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
@@ -325,7 +328,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Pirate FLUX Bot is running!')
+        self.wfile.write(b'VIP DALL-E 3 Bot is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -335,5 +338,17 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот запущен (режим ПИРАТСКИЙ FLUX)...")
+    print("Настраиваем меню команд...")
+    try:
+        # Бот сам прописывает себе меню при запуске
+        bot.set_my_commands([
+            BotCommand("start", "Перезапустить читом-бота"),
+            BotCommand("draw", "DALL-E 3: Нарисовать элитный шедевр"),
+            BotCommand("edit", "Изменить присланную картинку"),
+            BotCommand("make_meme", "Сделать мем из истории чата")
+        ])
+    except Exception as e:
+        print(f"Не удалось установить команды: {e}")
+        
+    print("Читом бот запущен (режим ПУТЬ МАЖОРА - DALL-E 3)...")
     bot.infinity_polling()
