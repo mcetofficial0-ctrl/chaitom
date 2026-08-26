@@ -200,7 +200,7 @@ def edit_command(message):
         else:
             bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"Ошибка обработки: {e}", message.chat.id, status_msg.message_id))
+        bot.edit_message_text(f"Ошибка обработки: {e}", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
