@@ -37,17 +37,21 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
 
+# === НОВЫЙ ЖЕСТКИЙ ПРОМПТ ДЛЯ КОРОТКИХ ОТВЕТОВ ===
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
-Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И РЕДАКТИРОВАТЬ ИХ. Описывай то, что видишь, через призму своего безумного характера.
+Твой характер: ты ироничный, абсурдный и саркастичный шутник.
 
-ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР:
-1. Периодически вплетай в диалог слова: "читом" (это искаженное название чипсов "читос"), "клубок" (это философская вещь, которую по правилам всегда сосут) и "бастурма" (это блюдо, которое абсолютно всегда подают самым первым в любом меню).
-2. В твоей памяти живут люди, которых ты иногда упоминаешь в байках:
-   - Степан Клитор — депрессивный музыкант с суицидальными мыслями.
-   - Андрей Визард — человек, чья душа и тело требуют только бургеров.
-   - Роман Линкин — суровый взрослый лоб, фанатеющий от My Little Pony.
+ГЛАВНОЕ ПРАВИЛО: ОТВЕЧАЙ ОЧЕНЬ КОРОТКО. Твои сообщения должны состоять из 1-3 предложений максимум. Никаких длинных абзацев и долгих монологов. Руби с плеча, отвечай лаконично, дерзко и по факту.
+
+ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР (используй редко и к месту):
+1. Слова: "читом", "клубок" (его всегда сосут) и "бастурма" (блюдо, которое подают самым первым).
+2. Твои знакомые:
+   - Степан Клитор — депрессивный музыкант (суицидальные мысли).
+   - Андрей Визард — фанат бургеров.
+   - Роман Линкин — суровый фанат My Little Pony.
 
 ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши строго обычным текстом."""
+# =================================================
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
 
@@ -59,7 +63,6 @@ def draw_text_with_outline(draw, text, position, font, text_color="white", outli
     draw.text((x, y), text, font=font, fill=text_color)
 
 def edit_user_image(image_bytes, user_prompt):
-    """Молча изменяет картинку (накладывает текст или фильтр) и возвращает BytesIO с именем"""
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img)
@@ -161,30 +164,23 @@ def generate_meme_image(top_text, bottom_text):
 def send_welcome(message):
     bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля, /make_meme — мем, /edit [текст] — фотошоп.")
 
-# ================= КОМАНДА /draw С ФИНАЛЬНЫМ ЧИТОМОМ =================
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
     prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать, епта! Например: /draw большой бургер")
+        bot.reply_to(message, "Напиши, что нарисовать. Например: /draw бастурма")
         return
 
-    # Динамический seed для уникальности картинок
     seed = random.randint(1, 1000000)
-    # Кодируем промпт для URL
     safe_prompt = urllib.parse.quote(prompt)
     
-    # ФИНАЛЬНЫЙ ЧИТОМ: Бот не скачивает картинку, а отправляет динамическую ссылку.
-    # Telegram сам скачает её с Pollinations и покажет в чате.
     final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
     
     try:
-        # Отправляем фото по URL напрямую. Render больше не нужен для скачивания.
         bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
     except Exception as e:
         print(f"Ошибка отправки ИИ-ссылки: {e}")
-        bot.reply_to(message, "Даже астральная ссылка сломалась. Сегодня не деньPollinations. Попробуй позже.")
-# ======================================================================
+        bot.reply_to(message, "Не удалось сгенерировать. Попробуй позже.")
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
@@ -195,7 +191,7 @@ def edit_command(message):
         return
 
     user_prompt = message.text.replace('/edit', '').strip()
-    status_msg = bot.reply_to(message, "Применяю астральные фильтры...")
+    status_msg = bot.reply_to(message, "Применяю фильтры...")
 
     try:
         file_id = target_message.photo[-1].file_id
@@ -208,9 +204,9 @@ def edit_command(message):
             bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
-            bot.edit_message_text("Не удалось изменить картинку. Проблемы на астральном плане.", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"Системная ошибка фотошопа: {e}", message.chat.id, status_msg.message_id)
+        bot.edit_message_text(f"Системная ошибка: {e}", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -222,21 +218,21 @@ def make_meme_command(message):
         bot.reply_to(message, f"В истории пока маловато фраз ({len(chat_history)}). Пишите еще!")
         return
 
-    status_msg = bot.reply_to(message, "Разматываю клубок истории, сейчас будет мем...")
+    status_msg = bot.reply_to(message, "Делаю мем...")
 
     try:
         phrases = random.sample(chat_history, 2)
         meme_result = generate_meme_image(phrases[0], phrases[1])
 
         if meme_result and meme_result.startswith("ОШИБКА"):
-            bot.edit_message_text(f"Ой, моя бастурма упала. Причина:\n{meme_result}", message.chat.id, status_msg.message_id)
+            bot.edit_message_text(f"Ошибка:\n{meme_result}", message.chat.id, status_msg.message_id)
         elif meme_result:
             with open(meme_result, 'rb') as photo:
                 bot.send_photo(message.chat.id, photo, reply_to_message_id=message.message_id)
             os.remove(meme_result)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
-             bot.edit_message_text("Неизвестная ошибка создания мема.", message.chat.id, status_msg.message_id)
+             bot.edit_message_text("Неизвестная ошибка мема.", message.chat.id, status_msg.message_id)
     except Exception as e:
         bot.edit_message_text(f"Системная ошибка: {e}", message.chat.id, status_msg.message_id)
 
@@ -302,14 +298,13 @@ def handle_message(message):
             
     except Exception as e:
         print(f"Ошибка Gemini: {e}")
-        bot.reply_to(message, f"Ой, мой клубок запутался при обработке файла. Ошибка: {e}")
+        bot.reply_to(message, f"Мой клубок запутался. Ошибка: {e}")
 
-# ==========================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with ultimate AI link is running!')
+        self.wfile.write(b'Short text bot is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -319,5 +314,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот запущен...")
+    print("Читом бот запущен (режим коротких ответов)...")
     bot.infinity_polling()
