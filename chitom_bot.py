@@ -85,25 +85,22 @@ def get_aspect_ratio(width, height):
     return min(candidates, key=lambda x: abs(candidates[x] - ratio))
 
 
-def edit_user_image(image_bytes, user_prompt):
-    """Редактирует исходное изображение напрямую через Gemini Image."""
-    original = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+def _is_gemini_overload_error(exc):
+    """Определяет временную ошибку перегрузки/недоступности Gemini."""
+    text = str(exc).upper()
+    return (
+        "503" in text
+        or "UNAVAILABLE" in text
+        or "HIGH DEMAND" in text
+        or "RESOURCE EXHAUSTED" in text
+        or "429" in text
+    )
 
-    # Передаём исходную картинку + текстовый промпт непосредственно
-    # image-модели. Не превращаем картинку в описание и не генерируем
-    # новую картинку с нуля.
-    edit_prompt = f"""
-Edit the provided image directly according to this instruction:
-{user_prompt}
 
-Keep the original image, subject identity, composition, perspective,
-lighting, background and details unless the instruction explicitly asks
-to change them. Only make the requested edits.
-Return the edited image itself. Do not return a description or instructions.
-"""
-
-    response = image_client.models.generate_content(
-        model="gemini-3.1-flash-image",
+def _generate_image_edit(model_name, edit_prompt, original):
+    """Один запрос к Gemini image model."""
+    return image_client.models.generate_content(
+        model=model_name,
         contents=[
             edit_prompt,
             original,
@@ -113,18 +110,168 @@ Return the edited image itself. Do not return a description or instructions.
         )
     )
 
-    # Ищем именно image-part в ответе.
-    for part in response.parts:
-        if getattr(part, "inline_data", None) is not None:
-            image = part.as_image()
-            output = io.BytesIO()
-            image.save(output, format="PNG")
-            output.seek(0)
-            output.name = "edited.png"
-            return output
+
+def edit_user_image(image_bytes, user_prompt):
+    """
+    Редактирует исходное изображение напрямую через Gemini Image.
+
+    Основная модель:
+        gemini-3.1-flash-image
+
+    Если она временно недоступна (503/429), делаем несколько повторов
+    и затем пробуем более лёгкую:
+        gemini-3.1-flash-lite-image
+    """
+    original = Image.open(
+        io.BytesIO(image_bytes)
+    ).convert("RGB")
+
+    edit_prompt = f"""
+Edit the provided image directly according to this instruction:
+
+{user_prompt}
+
+Keep the original image, subject identity, composition, perspective,
+camera angle, lighting, background and details unless the instruction
+explicitly asks to change them.
+
+Only make the requested edits.
+Do not describe the image.
+Do not answer with text.
+Return the edited image itself.
+"""
+
+    models_to_try = [
+        "gemini-3.1-flash-image",
+        "gemini-3.1-flash-lite-image",
+    ]
+
+    last_error = None
+
+    for model_name in models_to_try:
+
+        # Основную модель пробуем до 3 раз.
+        attempts = 3 if model_name == "gemini-3.1-flash-image" else 2
+
+        for attempt in range(attempts):
+            try:
+                print(
+                    f"EDIT: model={model_name}, "
+                    f"attempt={attempt + 1}/{attempts}"
+                )
+
+                response = _generate_image_edit(
+                    model_name,
+                    edit_prompt,
+                    original
+                )
+
+                # Ищем именно image-part.
+                for candidate in getattr(response, "candidates", []) or []:
+                    content = getattr(candidate, "content", None)
+
+                    for part in getattr(content, "parts", []) or []:
+                        inline_data = getattr(
+                            part,
+                            "inline_data",
+                            None
+                        )
+
+                        if (
+                            inline_data is not None
+                            and
+                            getattr(inline_data, "data", None)
+                        ):
+                            result_bytes = inline_data.data
+
+                            if isinstance(
+                                result_bytes,
+                                str
+                            ):
+                                result_bytes = base64.b64decode(
+                                    result_bytes
+                                )
+
+                            output = io.BytesIO(
+                                result_bytes
+                            )
+                            output.seek(0)
+                            output.name = "edited.png"
+
+                            print(
+                                "EDIT: image received from",
+                                model_name
+                            )
+
+                            return output
+
+                # На случай другой структуры ответа
+                for part in getattr(response, "parts", []) or []:
+                    inline_data = getattr(
+                        part,
+                        "inline_data",
+                        None
+                    )
+
+                    if (
+                        inline_data is not None
+                        and
+                        getattr(inline_data, "data", None)
+                    ):
+                        result_bytes = inline_data.data
+
+                        if isinstance(
+                            result_bytes,
+                            str
+                        ):
+                            result_bytes = base64.b64decode(
+                                result_bytes
+                            )
+
+                        output = io.BytesIO(
+                            result_bytes
+                        )
+                        output.seek(0)
+                        output.name = "edited.png"
+
+                        return output
+
+                raise RuntimeError(
+                    f"{model_name} не вернул изображение."
+                )
+
+            except Exception as e:
+                last_error = e
+
+                print(
+                    f"EDIT ERROR {model_name} "
+                    f"attempt {attempt + 1}: {repr(e)}"
+                )
+
+                # Не имеет смысла долго повторять постоянную ошибку
+                if not _is_gemini_overload_error(e):
+                    raise
+
+                if attempt < attempts - 1:
+                    delay = 2 ** (attempt + 1)
+                    print(
+                        f"EDIT: временная ошибка, "
+                        f"повтор через {delay} сек."
+                    )
+                    time.sleep(delay)
+
+        # Если основная модель не отвечает из-за перегрузки,
+        # автоматически переходим на Lite.
+
+        print(
+            f"EDIT: {model_name} недоступна, "
+            f"пробую следующую модель."
+        )
 
     raise RuntimeError(
-        "Gemini не вернул изображение. Проверь модель и API-ключ."
+        "Сервис Gemini временно перегружен. "
+        "Не удалось получить изображение после повторных попыток. "
+        f"Последняя ошибка: {last_error}"
     )
 
 def text_wrap(text, font, max_width):
