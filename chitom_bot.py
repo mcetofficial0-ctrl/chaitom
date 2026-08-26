@@ -38,7 +38,7 @@ safety_settings = [
 ]
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
-Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И СЛУШАТЬ АУДИО. Описывай то, что видишь или слышишь, через призму своего безумного характера.
+Твой характер: ты ироничный, абсурдный и саркастичный шутник. Твой юмор абстрактный и сюрреалистичный, но ты не скатываешься в бессмысленный бред — всегда сохраняй нить беседы. Если используешь мат, то редко и исключительно для комедийного акцента. ТЫ УМЕЕШЬ ВИДЕТЬ КАРТИНКИ И РЕДАКТИРОВАТЬ ИХ. Описывай то, что видишь, и комментируй изменения через призму своего безумного характера.
 
 ПРАВИЛА ТВОЕЙ ВСЕЛЕННОЙ И ЛОР:
 1. Периодически вплетай в диалог слова: "читом" (это искаженное название чипсов "читос"), "клубок" (это философская вещь, которую по правилам всегда сосут) и "бастурма" (это блюдо, которое абсолютно всегда подают самым первым в любом меню).
@@ -51,42 +51,59 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
 
-def edit_user_image(image_bytes, effect_name):
+def draw_text_with_outline(draw, text, position, font, text_color="white", outline_color="black"):
+    x, y = position
+    for adj in range(-2, 3):
+        draw.text((x+adj, y), text, font=font, fill=outline_color)
+        draw.text((x, y+adj), text, font=font, fill=outline_color)
+    draw.text((x, y), text, font=font, fill=text_color)
+
+def edit_user_image(image_bytes, user_prompt):
+    """Реально изменяет картинку на основе текстового промпта пользователя"""
     try:
-        img = Image.open(io.BytesIO(image_bytes))
-        effect_name = effect_name.lower()
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        width, height = img.size
         
-        if "invert" in effect_name or "инверт" in effect_name:
-            if img.mode == 'RGBA':
-                r, g, b, a = img.split()
-                img = Image.merge('RGB', (r, g, b))
-                img = ImageOps.invert(img)
-                img = img.convert('RGBA')
-            else:
-                img = ImageOps.invert(img.convert('RGB'))
-                
-        elif "bw" in effect_name or "чб" in effect_name or "черно" in effect_name:
+        prompt_lower = user_prompt.lower()
+        
+        # Определяем, какой текст нанести на основе промпта
+        text_to_draw = "CHITOM"
+        if "chitom" in prompt_lower:
+            text_to_draw = "CHITOM"
+        elif "читос" in prompt_lower:
+            text_to_draw = "ЧИТОС"
+        elif "root beer" in prompt_lower:
+            text_to_draw = "CHITOM" # Заменяем по запросу пользователя
+        elif user_prompt.strip():
+            # Если ввели кастомный текст, попробуем использовать его часть
+            words = user_prompt.split()
+            if len(words) > 1:
+                text_to_draw = " ".join(words[1:4]).upper()
+
+        # Применяем фильтр или накладываем текст в зависимости от промпта
+        if "invert" in prompt_lower or "инверт" in prompt_lower:
+            img = ImageOps.invert(img)
+        elif "bw" in prompt_lower or "чб" in prompt_lower:
             img = img.convert('L').convert('RGB')
-            
-        elif "flip" in effect_name or "перевер" in effect_name:
+        elif "flip" in prompt_lower or "перевер" in prompt_lower:
             img = img.rotate(180)
-            
-        elif "mirror" in effect_name or "зеркал" in effect_name:
-            img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            
-        else:
-            img = ImageOps.invert(img.convert('RGB'))
-            draw = ImageDraw.Draw(img)
-            try:
-                font = ImageFont.truetype(FONT_NAME, 30)
-                draw.text((20, 20), "ЧИТОМ БОТ EDITED", fill="red", font=font)
-            except:
-                pass
+
+        # Накладываем надпись на картинку (эффект правки банке/объекту)
+        try:
+            font = ImageFont.truetype(FONT_NAME, int(height / 12))
+        except:
+            font = ImageFont.load_default()
+
+        # Рисуем текст в заметном месте (по центру или чуть выше)
+        x = width // 6
+        y = height // 3
+        draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
 
         img.save(EDITED_NAME)
         return EDITED_NAME
     except Exception as e:
-        print(f"Ошибка обработки картинки: {e}")
+        print(f"Ошибка изменения картинки: {e}")
         return None
 
 def text_wrap(text, font, max_width):
@@ -106,13 +123,6 @@ def text_wrap(text, font, max_width):
                 i += 1
             lines.append(line.strip())
     return lines
-
-def draw_text_with_outline(draw, text, position, font, text_color="white", outline_color="black"):
-    x, y = position
-    for adj in range(-2, 3):
-        draw.text((x+adj, y), text, font=font, fill=outline_color)
-        draw.text((x, y+adj), text, font=font, fill=outline_color)
-    draw.text((x, y), text, font=font, fill=text_color)
 
 def generate_meme_image(top_text, bottom_text):
     try:
@@ -149,28 +159,39 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи! Умею делать мемы (/make_meme), изменять присланные картинки (/edit) и общаться с учетом контекста.")
+    bot.reply_to(message, "Я на связи! Умею делать мемы (/make_meme), изменять картинки по промпту (/edit) и общаться.")
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
     target_message = message.reply_to_message if message.reply_to_message else message
     
     if not target_message.photo:
-        bot.reply_to(message, "Прикрепи картинку или сделай реплай на фото с командой /edit [invert, bw, flip, mirror]")
+        bot.reply_to(message, "Сделай реплай на картинку с командой /edit и напиши, что изменить (например: /edit замени надпись на chitom)")
         return
 
-    effect_arg = message.text.replace('/edit', '').strip()
-    status_msg = bot.reply_to(message, "Применяю читом-фильтры к картинке...")
+    user_prompt = message.text.replace('/edit', '').strip()
+    status_msg = bot.reply_to(message, "Включаю астральный фотошоп, переделываю картинку...")
 
     try:
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        edited_file = edit_user_image(downloaded_file, effect_arg)
+        # 1. Изменяем картинку программно
+        edited_file = edit_user_image(downloaded_file, user_prompt)
+        
+        # 2. Генерируем смешной философский текст от Gemini с учетом картинки и промпта
+        image_obj = Image.open(io.BytesIO(downloaded_file))
+        response = model.generate_content([
+            f"Пользователь прислал картинку и попросил ее изменить с таким промптом: '{user_prompt}'. "
+            f"Напиши свой фирменный едкий, абсурдный комментарий в стиле лора (упомяни бастурму, клубок и кого-то из знакомых)."
+        ])
+        comment_text = response.text.replace('*', '')
+
         if edited_file:
+            # Отправляем измененную картинку с текстом-комментарием в качестве подписи
             with open(edited_file, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, reply_to_message_id=target_message.message_id)
+                bot.send_photo(message.chat.id, photo, caption=comment_text, reply_to_message_id=target_message.message_id)
             os.remove(edited_file)
             bot.delete_message(message.chat.id, status_msg.message_id)
         else:
@@ -275,7 +296,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot is running!')
+        self.wfile.write(b'Bot with Image editing prompt is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -285,5 +306,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот успешно запущен...")
+    print("Читом бот запущен...")
     bot.infinity_polling()
