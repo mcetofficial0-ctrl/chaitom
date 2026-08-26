@@ -2,7 +2,6 @@ import telebot
 import os
 import threading
 import random
-import time
 import io
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -37,7 +36,6 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
 
-# === НОВЫЙ ЖЕСТКИЙ ПРОМПТ ДЛЯ КОРОТКИХ ОТВЕТОВ ===
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот". 
 Твой характер: ты ироничный, абсурдный и саркастичный шутник.
 
@@ -51,7 +49,6 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
    - Роман Линкин — суровый фанат My Little Pony.
 
 ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши строго обычным текстом."""
-# =================================================
 
 model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
 
@@ -164,23 +161,42 @@ def generate_meme_image(top_text, bottom_text):
 def send_welcome(message):
     bot.reply_to(message, "Я на связи. /draw [промпт] — ИИ рисует с нуля, /make_meme — мем, /edit [текст] — фотошоп.")
 
+# ================= NANO BANANA 2 (IMAGEN) =================
 @bot.message_handler(commands=['draw', 'gen'])
 def draw_command(message):
     prompt = message.text.replace('/draw', '').replace('/gen', '').strip()
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать. Например: /draw бастурма")
+        bot.reply_to(message, "Напиши, что нарисовать, епта. Например: /draw бастурма")
         return
 
-    seed = random.randint(1, 1000000)
-    safe_prompt = urllib.parse.quote(prompt)
-    
-    final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
-    
+    status_msg = bot.reply_to(message, "Подключаю движок Nano Banana 2...")
+
     try:
-        bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
+        # Попытка №1: Официальный Google Imagen (Nano Banana 2)
+        if hasattr(genai, 'ImageGenerationModel'):
+            imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
+            result = imagen.generate_images(
+                prompt=prompt,
+                number_of_images=1,
+                aspect_ratio="1:1"
+            )
+            image_data = result.images[0]._image_bytes
+            bot.send_photo(message.chat.id, image_data, reply_to_message_id=message.message_id)
+            bot.delete_message(message.chat.id, status_msg.message_id)
+            return
     except Exception as e:
-        print(f"Ошибка отправки ИИ-ссылки: {e}")
-        bot.reply_to(message, "Не удалось сгенерировать. Попробуй позже.")
+        print(f"Nano Banana 2 отдыхает: {e}. Перехожу на запасной мольберт.")
+
+    # Попытка №2: Безотказный резервный канал, если Google ругается на промпт
+    try:
+        seed = random.randint(1, 1000000)
+        safe_prompt = urllib.parse.quote(prompt)
+        final_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
+        bot.send_photo(message.chat.id, final_image_url, reply_to_message_id=message.message_id)
+        bot.delete_message(message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text("Все мольберты сгорели нахрен. Попробуй позже.", message.chat.id, status_msg.message_id)
+# ==========================================================
 
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
@@ -304,7 +320,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Short text bot is running!')
+        self.wfile.write(b'Bot with Nano Banana 2 is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -314,5 +330,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот запущен (режим коротких ответов)...")
+    print("Читом бот запущен (режим Nano Banana)...")
     bot.infinity_polling()
