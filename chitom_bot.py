@@ -402,52 +402,56 @@ def draw_command(message):
     if not prompt:
         bot.reply_to(
             message,
-            "Напиши, что нарисовать. Например: /draw киберпанк-город ночью"
+            "Напиши, что нарисовать. Например: /draw кот в космосе"
         )
         return
 
-    status_msg = bot.reply_to(message, "🍌 Nano Banana Pro рисует...")
+    status_msg = bot.reply_to(
+        message,
+        "🍌 Nano Banana Pro рисует..."
+    )
 
     try:
         response = image_client.models.generate_content(
-            model="gemini-3-pro-image",
+            model="gemini-3-pro-image-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(
-                    aspect_ratio="1:1",
-                    image_size="2K"
-                )
+                response_format={
+                    "image": {
+                        "aspect_ratio": "1:1",
+                        "image_size": "2K"
+                    }
+                }
             )
         )
 
-        image_bytes = None
+        # ВАЖНО:
+        # Не используем response.candidates.
+        # Берём image part напрямую из response.parts.
+        image_part = None
 
-        for candidate in response.candidates:
-            if not candidate.content:
-                continue
-
-            for part in candidate.content.parts:
-                if getattr(part, "inline_data", None):
-                    image_bytes = part.inline_data.data
+        for part in response.parts or []:
+            if getattr(part, "inline_data", None):
+                if part.inline_data.data:
+                    image_part = part
                     break
 
-            if image_bytes:
-                break
-
-        if not image_bytes:
+        if image_part is None:
             raise RuntimeError(
-                "Gemini не вернул изображение. "
-                f"Ответ: {response}"
+                f"Gemini не вернул изображение.\nОтвет: {response}"
             )
 
-        if isinstance(image_bytes, str):
-            image_bytes = base64.b64decode(image_bytes)
+        # Превращаем Gemini image part в PIL Image
+        image = image_part.as_image()
 
-        output = io.BytesIO(image_bytes)
+        # Сохраняем в памяти
+        output = io.BytesIO()
+        image.save(output, format="PNG")
         output.seek(0)
         output.name = "generated.png"
 
+        # Удаляем статус
         try:
             bot.delete_message(
                 message.chat.id,
@@ -456,6 +460,7 @@ def draw_command(message):
         except Exception:
             pass
 
+        # Отправляем прямо как изображение
         bot.send_photo(
             chat_id=message.chat.id,
             photo=output,
@@ -467,45 +472,41 @@ def draw_command(message):
     except Exception as e:
         print("DRAW ERROR:", repr(e))
 
-        # Fallback на Nano Banana 2
+        # FALLBACK — Nano Banana 2
         try:
-            print("DRAW: пробую Nano Banana 2...")
+            print("DRAW: переключаюсь на Nano Banana 2...")
 
             response = image_client.models.generate_content(
                 model="gemini-3.1-flash-image",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(
-                        aspect_ratio="1:1",
-                        image_size="2K"
-                    )
+                    response_format={
+                        "image": {
+                            "aspect_ratio": "1:1",
+                            "image_size": "2K"
+                        }
+                    }
                 )
             )
 
-            image_bytes = None
+            image_part = None
 
-            for candidate in response.candidates:
-                if not candidate.content:
-                    continue
-
-                for part in candidate.content.parts:
-                    if getattr(part, "inline_data", None):
-                        image_bytes = part.inline_data.data
+            for part in response.parts or []:
+                if getattr(part, "inline_data", None):
+                    if part.inline_data.data:
+                        image_part = part
                         break
 
-                if image_bytes:
-                    break
-
-            if not image_bytes:
+            if image_part is None:
                 raise RuntimeError(
-                    "Nano Banana 2 тоже не вернула изображение."
+                    f"Nano Banana 2 не вернула изображение.\nОтвет: {response}"
                 )
 
-            if isinstance(image_bytes, str):
-                image_bytes = base64.b64decode(image_bytes)
+            image = image_part.as_image()
 
-            output = io.BytesIO(image_bytes)
+            output = io.BytesIO()
+            image.save(output, format="PNG")
             output.seek(0)
             output.name = "generated.png"
 
@@ -537,7 +538,7 @@ def draw_command(message):
             except Exception:
                 bot.send_message(
                     message.chat.id,
-                    "Ошибка генерации изображения."
+                    f"Ошибка генерации:\n{fallback_error}"
                 )
 # ==========================================================
 
