@@ -32,7 +32,7 @@ CONTEXT_LIMIT = 15
 
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HEAT_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
@@ -67,16 +67,12 @@ def generate_ai_image(prompt_text):
         print(f"Ошибка генерации картинки Imagen: {e}")
         return None
 
-# НОВОЕ: Функция для изменения присланной картинки через Pillow
 def edit_user_image(image_bytes, effect_name):
     try:
         img = Image.open(io.BytesIO(image_bytes))
-        
-        # Выбираем эффект в зависимости от запроса
         effect_name = effect_name.lower()
         
         if "invert" in effect_name or "инверт" in effect_name:
-            # Инверсия цветов
             if img.mode == 'RGBA':
                 r, g, b, a = img.split()
                 img = Image.merge('RGB', (r, g, b))
@@ -85,20 +81,16 @@ def edit_user_image(image_bytes, effect_name):
             else:
                 img = ImageOps.invert(img.convert('RGB'))
                 
-        elif "bw" / "чб" in effect_name or "черно" in effect_name:
-            # Черно-белый стиль (настроение Степана Клитора)
+        elif "bw" in effect_name or "чб" in effect_name or "черно" in effect_name:
             img = img.convert('L').convert('RGB')
             
         elif "flip" in effect_name or "перевер" in effect_name:
-            # Перевернуть вверх дном
             img = img.rotate(180)
             
         elif "mirror" in effect_name or "зеркал" in effect_name:
-            # Зеркальное отражение
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
             
         else:
-            # По умолчанию делаем безумный микс: инвертируем и добавляем рамку/надпись
             img = ImageOps.invert(img.convert('RGB'))
             draw = ImageDraw.Draw(img)
             try:
@@ -193,14 +185,12 @@ def draw_command(message):
     except Exception as e:
         bot.edit_message_text(f"Ошибка генерации: {e}", message.chat.id, status_msg.message_id)
 
-# НОВОЕ: Обработчик команды /edit для изменения присланных картинок
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
-    # Проверяем, есть ли картинка в сообщении или это реплай на картинку
     target_message = message.reply_to_message if message.reply_to_message else message
     
     if not target_message.photo:
-        bot.reply_to(message, "Прикрепи картинку к сообщению или сделай реплай на фото с командой /edit [эффект: invert, bw, flip, mirror]")
+        bot.reply_to(message, "Прикрепи картинку или сделай реплай на фото с командой /edit [invert, bw, flip, mirror]")
         return
 
     effect_arg = message.text.replace('/edit', '').strip()
@@ -326,7 +316,6 @@ def run_dummy_server():
     server = HTTPServer(('0.0.0.0', port), DummyHandler)
     server.serve_forever()
 
-></head></html>
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
