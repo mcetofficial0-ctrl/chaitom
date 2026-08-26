@@ -4,7 +4,7 @@ import threading
 import random
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from groq import Groq
+import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 # Позволяет Pillow работать с неполными JPG файлами
@@ -12,9 +12,11 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Ключи и настройки
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-client = Groq(api_key=GROQ_API_KEY)
+
+# Подключаем платный Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
 
 # Настройки файлов для мемов
 TEMPLATE_NAME = 'template.jpg'
@@ -33,6 +35,9 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 ты обязан использовать ровно три слова: "читом", "бастурма" и "клубок". 
 Старайся вписывать их в контекст диалога так, чтобы это звучало забавно или органично.
 ВАЖНО: Ни в коем случае не используй звездочки (*) и форматирование текста! Пиши обычным текстом."""
+
+# Инициализируем новейшую модель и передаем ей системные инструкции
+model = genai.GenerativeModel('gemini-3.6-flash', system_instruction=SYSTEM_PROMPT)
 
 def text_wrap(text, font, max_width):
     lines = []
@@ -97,7 +102,7 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привет! Я читом бот. Пиши мне про бастурму или клубок. А командой /make_meme я сделаю мем из ваших фраз!")
+    bot.reply_to(message, "Привет! Я читом бот (на базе платного Gemini). Пиши мне про бастурму или клубок. А командой /make_meme я сделаю мем из ваших фраз!")
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -150,20 +155,13 @@ def handle_message(message):
         if not (is_mentioned or is_reply):
             return
 
-    # Запрос к нейросети
+    # Запрос к нейросети Gemini
     try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": message.text}
-            ],
-            model="qwen/qwen3.8-27b", 
-        )
-        response_text = chat_completion.choices[0].message.content
-        clean_reply = response_text.replace('*', '')
+        response = model.generate_content(message.text)
+        clean_reply = response.text.replace('*', '')
         bot.reply_to(message, clean_reply)
     except Exception as e:
-        print(f"Ошибка Groq: {e}")
+        print(f"Ошибка Gemini: {e}")
 
 # ==========================================
 # Фейковый веб-сервер для Render
@@ -172,7 +170,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot with Meme maker is running!')
+        self.wfile.write(b'Bot with Meme maker (Gemini Edition) is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
@@ -182,5 +180,5 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 if __name__ == '__main__':
-    print("Читом бот с мемоделом запущен...")
+    print("Читом бот с мемоделом (Gemini) запущен...")
     bot.infinity_polling()
