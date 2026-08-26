@@ -4,10 +4,6 @@ import threading
 import random
 import time
 import io
-import json
-import re
-import cv2
-import numpy as np
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFile, ImageOps
@@ -61,209 +57,60 @@ def draw_text_with_outline(draw, text, position, font, text_color="white", outli
         draw.text((x, y+adj), text, font=font, fill=outline_color)
     draw.text((x, y), text, font=font, fill=text_color)
 
-def parse_edit_prompt(user_prompt):
-    """
-    Разбирает:
-    /edit замени надпись root beer на chitom
-    """
-    prompt = user_prompt.strip()
-
-    match = re.match(
-        r'^(?:замени|поменяй|заменить)\s+'
-        r'(?:надпись\s+)?(.+?)\s+на\s+(.+?)$',
-        prompt,
-        re.IGNORECASE
-    )
-
-    if match:
-        return match.group(1).strip(), match.group(2).strip()
-
-    return None, None
-
-
-def find_text_bbox(image, old_text):
-    """Gemini определяет координаты старой надписи."""
-    width, height = image.size
-
-    prompt = f"""
-Найди на этой картинке текст "{old_text}".
-
-Верни ТОЛЬКО JSON без markdown:
-{{"x1": 0, "y1": 0, "x2": 100, "y2": 100}}
-
-Размер картинки: {width}x{height}.
-Координаты должны быть в пикселях исходной картинки.
-Прямоугольник должен полностью покрывать старую надпись.
-"""
-
-    response = model.generate_content([prompt, image])
-    raw = response.text.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
-
-    match = re.search(r'\{.*?\}', raw, re.DOTALL)
-    if not match:
-        raise ValueError(f"Gemini не вернул координаты: {raw}")
-
-    data = json.loads(match.group(0))
-
-    bbox = [
-        int(data["x1"]),
-        int(data["y1"]),
-        int(data["x2"]),
-        int(data["y2"])
-    ]
-
-    bbox[0] = max(0, min(bbox[0], width - 1))
-    bbox[1] = max(0, min(bbox[1], height - 1))
-    bbox[2] = max(0, min(bbox[2], width))
-    bbox[3] = max(0, min(bbox[3], height))
-
-    return bbox
-
-
 def edit_user_image(image_bytes, user_prompt):
-    """
-    Удаляет старую надпись и рисует новую.
-    Возвращает BytesIO с ГОТОВОЙ КАРТИНКОЙ.
-    """
+    """Молча изменяет картинку (накладывает текст или фильтр) и возвращает BytesIO с именем"""
     try:
-        old_text, new_text = parse_edit_prompt(user_prompt)
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        width, height = img.size
+        
+        prompt_lower = user_prompt.lower()
+        
+        # Определяем, какой текст нанести, если в промпте есть ключевые слова
+        text_to_draw = "CHITOM"
+        if "chitom" in prompt_lower:
+            text_to_draw = "CHITOM"
+        elif "читос" in prompt_lower:
+            text_to_draw = "ЧИТОС"
+        elif "бургер" in prompt_lower:
+            text_to_draw = "БУРГЕР"
+        elif user_prompt.strip():
+            # Если текста много, берем первые пару слов
+            words = user_prompt.split()
+            if len(words) > 1:
+                text_to_draw = " ".join(words[1:4]).upper()
 
-        if not old_text or not new_text:
-            raise ValueError(
-                "Формат команды: /edit замени надпись СТАРАЯ на НОВАЯ"
-            )
+        # Применяем фильтры/трансформации, если они есть в промпте
+        if "invert" in prompt_lower or "инверт" in prompt_lower:
+            img = ImageOps.invert(img)
+        elif "bw" in prompt_lower or "чб" in prompt_lower or "черно" in prompt_lower:
+            img = img.convert('L').convert('RGB')
+        elif "flip" in prompt_lower or "перевер" in prompt_lower:
+            img = img.rotate(180)
+        elif "mirror" in prompt_lower or "зеркал" in prompt_lower:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
-        print("EDIT OLD:", old_text)
-        print("EDIT NEW:", new_text)
+        # Накладываем текст (астральный маркер)
+        try:
+            # Масштабируем шрифт под размер картинки
+            font = ImageFont.truetype(FONT_NAME, int(height / 12))
+        except:
+            font = ImageFont.load_default()
 
-        # Открываем оригинал
-        pil_img = Image.open(
-            io.BytesIO(image_bytes)
-        ).convert("RGB")
+        # Рисуем текст в верхней части
+        x = width // 10
+        y = height // 10
+        draw_text_with_outline(draw, text_to_draw, (x, y), font, text_color="yellow", outline_color="black")
 
-        # Gemini находит старую надпись
-        bbox = find_text_bbox(
-            pil_img,
-            old_text
-        )
-
-        print("EDIT BBOX:", bbox)
-
-        # PIL -> OpenCV
-        cv_img = np.array(pil_img)
-        cv_img = cv2.cvtColor(
-            cv_img,
-            cv2.COLOR_RGB2BGR
-        )
-
-        h, w = cv_img.shape[:2]
-        x1, y1, x2, y2 = bbox
-
-        # Небольшой запас вокруг старого текста
-        pad_x = max(5, int((x2 - x1) * 0.10))
-        pad_y = max(5, int((y2 - y1) * 0.20))
-
-        x1 = max(0, x1 - pad_x)
-        y1 = max(0, y1 - pad_y)
-        x2 = min(w, x2 + pad_x)
-        y2 = min(h, y2 + pad_y)
-
-        mask = np.zeros(
-            (h, w),
-            dtype=np.uint8
-        )
-
-        mask[y1:y2, x1:x2] = 255
-
-        # Убираем старую надпись
-        cv_img = cv2.inpaint(
-            cv_img,
-            mask,
-            7,
-            cv2.INPAINT_TELEA
-        )
-
-        # OpenCV -> PIL
-        cv_img = cv2.cvtColor(
-            cv_img,
-            cv2.COLOR_BGR2RGB
-        )
-
-        result = Image.fromarray(cv_img)
-        draw = ImageDraw.Draw(result)
-
-        # Подбираем шрифт под старую область
-        area_width = x2 - x1
-        area_height = y2 - y1
-
-        font_size = max(
-            12,
-            int(area_height * 0.75)
-        )
-
-        while font_size >= 10:
-            try:
-                font = ImageFont.truetype(
-                    FONT_NAME,
-                    font_size
-                )
-
-                tb = draw.textbbox(
-                    (0, 0),
-                    new_text.upper(),
-                    font=font
-                )
-
-                text_width = tb[2] - tb[0]
-
-                if text_width <= area_width * 0.95:
-                    break
-
-                font_size -= 1
-
-            except Exception:
-                font = ImageFont.load_default()
-                break
-
-        # Центрируем новую надпись
-        tb = draw.textbbox(
-            (0, 0),
-            new_text.upper(),
-            font=font
-        )
-
-        text_width = tb[2] - tb[0]
-        text_height = tb[3] - tb[1]
-
-        text_x = x1 + (area_width - text_width) / 2
-        text_y = y1 + (area_height - text_height) / 2
-
-        draw_text_with_outline(
-            draw,
-            new_text.upper(),
-            (text_x, text_y),
-            font,
-            text_color="white",
-            outline_color="black"
-        )
-
-        # Возвращаем ИМЕННО картинку
-        output = io.BytesIO()
-
-        result.save(
-            output,
-            format="JPEG",
-            quality=95
-        )
-
-        output.seek(0)
-        output.name = "edited.jpg"
-
-        return output
-
+        # Сохраняем в оперативную память (BytesIO)
+        bio = io.BytesIO()
+        img.save(bio, format='JPEG')
+        bio.seek(0)
+        # Обязательно даем имя файлу, чтобы Telegram его принял!
+        bio.name = 'edited.jpg'
+        return bio
     except Exception as e:
-        print("EDIT IMAGE ERROR:", repr(e))
+        print(f"Ошибка изменения картинки: {e}")
         return None
 
 def text_wrap(text, font, max_width):
@@ -319,119 +166,38 @@ def generate_meme_image(top_text, bottom_text):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на связи! /make_meme — сделать мем, /edit [текст] — изменить картинку.")
+    bot.reply_to(message, "Я на связи. /make_meme — мем, /edit [текст] — молчаливый фотошоп картинки.")
 
-@bot.message_handler(
-    func=lambda m: bool(
-        m.text and
-        m.text.strip().lower().startswith("/edit")
-    ),
-    content_types=["text"]
-)
+# ИСПРАВЛЕНО: Теперь эта команда работает молча и отправляет ТОЛЬКО фото
+@bot.message_handler(commands=['edit'])
 def edit_command(message):
-    print("========== EDIT HANDLER ==========")
-    print("EDIT TEXT:", repr(message.text))
-
-    # Команда должна быть reply на фото
-    target_message = message.reply_to_message
-
-    if not target_message or not target_message.photo:
-        bot.reply_to(
-            message,
-            "Сделай reply именно на картинку.\n"
-            "Например:\n"
-            "/edit замени надпись root beer на chitom"
-        )
+    target_message = message.reply_to_message if message.reply_to_message else message
+    
+    if not target_message.photo:
+        bot.reply_to(message, "Сделай реплай на фото с командой /edit [что сделать/написать]")
         return
 
-    user_prompt = message.text.strip()
-
-    # Убираем /edit и возможный @username
-    user_prompt = re.sub(
-        r"^/edit(?:@\w+)?\s*",
-        "",
-        user_prompt,
-        count=1,
-        flags=re.IGNORECASE
-    ).strip()
-
-    if not user_prompt:
-        bot.reply_to(
-            message,
-            "Напиши, что изменить.\n"
-            "Например:\n"
-            "/edit замени надпись root beer на chitom"
-        )
-        return
-
-    status_msg = bot.reply_to(
-        message,
-        "Редактирую картинку..."
-    )
+    user_prompt = message.text.replace('/edit', '').strip()
+    # Краткий статус, чтобы пользователь знал, что бот работает
+    status_msg = bot.reply_to(message, "Применяю астральные фильтры...")
 
     try:
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
 
-        downloaded_file = bot.download_file(
-            file_info.file_path
-        )
+        # 1. Молча изменяем картинку в оперативной памяти
+        photo_bio = edit_user_image(downloaded_file, user_prompt)
 
-        print(
-            "EDIT: downloaded",
-            len(downloaded_file),
-            "bytes"
-        )
-
-        photo_bio = edit_user_image(
-            downloaded_file,
-            user_prompt
-        )
-
-        if photo_bio is None:
-            bot.edit_message_text(
-                "Не удалось изменить картинку. "
-                "Проверь название старой надписи.",
-                message.chat.id,
-                status_msg.message_id
-            )
-            return
-
-        photo_bio.seek(0)
-
-        # ВАЖНО: отправляем только PHOTO.
-        bot.send_photo(
-            chat_id=message.chat.id,
-            photo=photo_bio,
-            reply_to_message_id=message.message_id
-        )
-
-        print("EDIT: PHOTO SENT SUCCESSFULLY")
-
-        try:
-            bot.delete_message(
-                message.chat.id,
-                status_msg.message_id
-            )
-        except Exception:
-            pass
-
+        if photo_bio:
+            # 2. Отправляем ТОЛЬКО измененную картинку без текста
+            bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
+            # Удаляем статусное сообщение
+            bot.delete_message(message.chat.id, status_msg.message_id)
+        else:
+            bot.edit_message_text("Не удалось изменить картинку. Проблемы на астральном плане.", message.chat.id, status_msg.message_id)
     except Exception as e:
-        print("EDIT SEND ERROR:", repr(e))
-
-        try:
-            bot.edit_message_text(
-                f"Ошибка обработки картинки:\n{e}",
-                message.chat.id,
-                status_msg.message_id
-            )
-        except Exception:
-            bot.send_message(
-                message.chat.id,
-                f"Ошибка обработки картинки:\n{e}"
-            )
-
-
+        bot.edit_message_text(f"Системная ошибка фотошопа: {e}", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
@@ -463,11 +229,6 @@ def make_meme_command(message):
 
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'audio'])
 def handle_message(message):
-    # /edit обрабатывается отдельным обработчиком выше.
-    # Никогда не отправляем /edit в обычный Gemini-чат.
-    if message.text and message.text.strip().lower().startswith("/edit"):
-        return
-
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Аноним"
     text = message.text or message.caption or ""
@@ -498,8 +259,8 @@ def handle_message(message):
     try:
         history_text = "\n".join(dialog_context[chat_id])
         prompt = (
-            f"Вот контекст диалога:\n{history_text}\n\n"
-            f"Ответь на последнее сообщение пользователя {user_name}."
+            f"Вот последние сообщения в этом чате (используй их для понимания контекста):\n{history_text}\n\n"
+            f"Основываясь на этом диалоге, ответь на последнее сообщение пользователя {user_name}."
         )
 
         gemini_contents = [prompt]
@@ -535,7 +296,7 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'Bot is running!')
+        self.wfile.write(b'Silent PhotoBot is running!')
 
 def run_dummy_server():
     port = int(os.environ.get('PORT', 10000))
