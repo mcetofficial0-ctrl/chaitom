@@ -161,41 +161,82 @@ def send_welcome(message):
 @bot.message_handler(commands=['edit'])
 def edit_command(message):
     target_message = message.reply_to_message if message.reply_to_message else message
-    
+
     if not target_message.photo:
-        bot.reply_to(message, "Сделай реплай на картинку с командой /edit и напиши, что изменить (например: /edit замени надпись на chitom)")
+        bot.reply_to(
+            message,
+            "Сделай реплай на картинку с командой /edit и напиши, что изменить "
+            "(например: /edit замени надпись на chitom)"
+        )
         return
 
-    user_prompt = message.text.replace('/edit', '').strip()
-    status_msg = bot.reply_to(message, "Включаю астральный фотошоп, переделываю картинку...")
+    user_prompt = message.text.replace('/edit', '', 1).strip()
+
+    if not user_prompt:
+        bot.reply_to(message, "Напиши, что именно изменить на картинке.")
+        return
+
+    status_msg = bot.reply_to(
+        message,
+        "Включаю астральный фотошоп, переделываю картинку..."
+    )
 
     try:
+        # Получаем оригинальную картинку
         file_id = target_message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # 1. Изменяем картинку в памяти (возвращает BytesIO)
+        # Изменяем картинку
         photo_bio = edit_user_image(downloaded_file, user_prompt)
-        
-        # 2. Генерируем текст от Gemini
-        response = model.generate_content([
-            f"Пользователь прислал картинку и попросил ее изменить с промптом: '{user_prompt}'. "
-            f"Напиши свой фирменный едкий комментарий в стиле лора (упомяни бастурму, клубок и кого-то из знакомых)."
-        ])
-        comment_text = response.text.replace('*', '')
 
-        if photo_bio:
-            # СНАЧАЛА отправляем измененную картинку прямо из памяти
-            bot.send_photo(message.chat.id, photo_bio, reply_to_message_id=target_message.message_id)
-            
-            # СРАЗУ ПОСЛЕ НЕЕ отправляем текстом весь лор
-            bot.send_message(message.chat.id, comment_text, reply_to_message_id=target_message.message_id)
-            
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        else:
-            bot.edit_message_text("Не удалось изменить картинку.", message.chat.id, status_msg.message_id)
+        if not photo_bio:
+            bot.edit_message_text(
+                "Не удалось изменить картинку.",
+                message.chat.id,
+                status_msg.message_id
+            )
+            return
+
+        # Генерируем комментарий
+        response = model.generate_content([
+            f"Пользователь прислал картинку и попросил её изменить: '{user_prompt}'. "
+            f"Напиши короткий фирменный едкий комментарий в стиле лора. "
+            f"Упомяни бастурму, клубок и кого-нибудь из знакомых."
+        ])
+
+        comment_text = response.text.replace('*', '').strip()
+
+        # Отправляем изменённую картинку ОДНИМ сообщением
+        photo_bio.seek(0)
+
+        bot.send_photo(
+            message.chat.id,
+            photo_bio,
+            caption=comment_text,
+            reply_to_message_id=message.message_id
+        )
+
+        # Удаляем сообщение "обрабатываю..."
+        bot.delete_message(
+            message.chat.id,
+            status_msg.message_id
+        )
+
     except Exception as e:
-        bot.edit_message_text(f"Ошибка обработки: {e}", message.chat.id, status_msg.message_id)
+        print(f"Ошибка /edit: {e}")
+
+        try:
+            bot.edit_message_text(
+                f"Ошибка обработки: {e}",
+                message.chat.id,
+                status_msg.message_id
+            )
+        except Exception:
+            bot.send_message(
+                message.chat.id,
+                f"Ошибка обработки: {e}"
+            )
 
 @bot.message_handler(commands=['make_meme'])
 def make_meme_command(message):
