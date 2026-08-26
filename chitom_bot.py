@@ -406,44 +406,41 @@ def draw_command(message):
         )
         return
 
-    status_msg = bot.reply_to(
-        message,
-        "🍌 Nano Banana Pro рисует..."
-    )
+    status_msg = bot.reply_to(message, "🍌 Nano Banana Pro рисует...")
 
     try:
-        # Более мощная модель для генерации изображений
         response = image_client.models.generate_content(
             model="gemini-3-pro-image",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
-                response_format={
-                    "image": {
-                        "aspect_ratio": "1:1",
-                        "image_size": "2K"
-                    }
-                }
+                image_config=types.ImageConfig(
+                    aspect_ratio="1:1",
+                    image_size="2K"
+                )
             )
         )
 
         image_bytes = None
 
-        # Ищем изображение в ответе
-        for part in response.parts:
-            if getattr(part, "inline_data", None):
-                inline_data = part.inline_data
+        for candidate in response.candidates:
+            if not candidate.content:
+                continue
 
-                if inline_data.data:
-                    image_bytes = inline_data.data
+            for part in candidate.content.parts:
+                if getattr(part, "inline_data", None):
+                    image_bytes = part.inline_data.data
                     break
+
+            if image_bytes:
+                break
 
         if not image_bytes:
             raise RuntimeError(
-                "Nano Banana Pro не вернула изображение."
+                "Gemini не вернул изображение. "
+                f"Ответ: {response}"
             )
 
-        # На случай, если SDK вернул base64-строку
         if isinstance(image_bytes, str):
             image_bytes = base64.b64decode(image_bytes)
 
@@ -451,7 +448,6 @@ def draw_command(message):
         output.seek(0)
         output.name = "generated.png"
 
-        # Удаляем сообщение "рисует..."
         try:
             bot.delete_message(
                 message.chat.id,
@@ -460,19 +456,18 @@ def draw_command(message):
         except Exception:
             pass
 
-        # Отправляем именно картинку
         bot.send_photo(
             chat_id=message.chat.id,
             photo=output,
             reply_to_message_id=message.message_id
         )
 
-        print("DRAW: Nano Banana Pro image sent")
+        print("DRAW: Nano Banana Pro успешно сгенерировал изображение")
 
     except Exception as e:
         print("DRAW ERROR:", repr(e))
 
-        # Запасной вариант — Nano Banana 2
+        # Fallback на Nano Banana 2
         try:
             print("DRAW: пробую Nano Banana 2...")
 
@@ -481,22 +476,26 @@ def draw_command(message):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE"],
-                    response_format={
-                        "image": {
-                            "aspect_ratio": "1:1",
-                            "image_size": "2K"
-                        }
-                    }
+                    image_config=types.ImageConfig(
+                        aspect_ratio="1:1",
+                        image_size="2K"
+                    )
                 )
             )
 
             image_bytes = None
 
-            for part in response.parts:
-                if getattr(part, "inline_data", None):
-                    if part.inline_data.data:
+            for candidate in response.candidates:
+                if not candidate.content:
+                    continue
+
+                for part in candidate.content.parts:
+                    if getattr(part, "inline_data", None):
                         image_bytes = part.inline_data.data
                         break
+
+                if image_bytes:
+                    break
 
             if not image_bytes:
                 raise RuntimeError(
@@ -524,17 +523,14 @@ def draw_command(message):
                 reply_to_message_id=message.message_id
             )
 
-            print("DRAW: Nano Banana 2 fallback sent")
+            print("DRAW: Nano Banana 2 успешно сгенерировал изображение")
 
         except Exception as fallback_error:
-            print(
-                "DRAW FALLBACK ERROR:",
-                repr(fallback_error)
-            )
+            print("DRAW FALLBACK ERROR:", repr(fallback_error))
 
             try:
                 bot.edit_message_text(
-                    "🍌 Банан сломался. Попробуй ещё раз позже.",
+                    f"Ошибка генерации:\n{fallback_error}",
                     message.chat.id,
                     status_msg.message_id
                 )
