@@ -104,13 +104,14 @@ def is_command(message, names):
     ))
 
 # ==========================================================
-# DRAW — NANO BANANA 2
+# DRAW — NANO BANANA 2 LITE (FAST)
 # ==========================================================
 
-# Оставляем только Flash-модель и даем ей 3 попытки на случай сбоев сети
 DRAW_MODELS = [
-    ("gemini-3.1-flash-image", "Nano Banana 2", 3),
+    ("gemini-3.1-flash-lite-image", "Nano Banana 2 Lite", 2),
+    ("gemini-3.1-flash-image", "Nano Banana 2", 1),
 ]
+
 
 def draw_generate(model_name, prompt):
     response = image_client.models.generate_content(
@@ -120,7 +121,7 @@ def draw_generate(model_name, prompt):
             response_modalities=["IMAGE"],
             image_config=types.ImageConfig(
                 aspect_ratio="1:1",
-                image_size="2K"
+                image_size="1K"
             )
         )
     )
@@ -132,12 +133,15 @@ def draw_generate(model_name, prompt):
 
     return data
 
+
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
     content_types=["text", "photo"]
 )
 def draw_command(message):
+
     raw = message.caption if message.photo else message.text
+
     prompt = re.sub(
         r"^/(draw|gen)(@\w+)?\s*",
         "",
@@ -146,61 +150,92 @@ def draw_command(message):
     ).strip()
 
     if not prompt:
-        bot.reply_to(message, "Напиши, что нарисовать.")
+        bot.reply_to(
+            message,
+            "Напиши, что нарисовать."
+        )
         return
 
     enh_prompt = f"""
 Create the image exactly according to the user's request.
 The request may be written in Russian. Understand Russian naturally.
-Preserve all requested objects, characters, actions, composition,
-lighting, style, camera angle, atmosphere and text.
+Preserve the requested objects, characters, actions, composition,
+lighting, style and text.
 
 USER REQUEST:
 {prompt}
 """
 
-    # Поменяли статусное сообщение!
-    status = bot.reply_to(message, "🍌 Nano Banana 2 рисует...")
+    status = bot.reply_to(
+        message,
+        "🍌 Рисую..."
+    )
 
-    # Читом: запускаем рисование в фоне, чтобы бот не вис!
     def task():
+
         image_data = None
         last_error = None
 
         for model_name, label, attempts in DRAW_MODELS:
+
             for attempt in range(1, attempts + 1):
+
                 try:
-                    print(f"DRAW {label} {attempt}/{attempts}")
-                    image_data = draw_generate(model_name, enh_prompt)
+
+                    print(
+                        f"DRAW {label} "
+                        f"{attempt}/{attempts}"
+                    )
+
+                    image_data = draw_generate(
+                        model_name,
+                        enh_prompt
+                    )
+
+                    print(
+                        f"DRAW OK: {label}"
+                    )
+
                     break
+
                 except Exception as e:
+
                     last_error = e
-                    print(f"DRAW ERROR: {repr(e)}")
 
-                if not temp_error(last_error) or attempt == attempts:
-                    break
+                    print(
+                        f"DRAW ERROR {label}:",
+                        repr(e)
+                    )
 
-                time.sleep(min(2 ** attempt, 10))
+                    if not temp_error(e):
+                        break
+
+                    if attempt < attempts:
+                        time.sleep(
+                            2 ** attempt
+                        )
 
             if image_data:
                 break
 
-        # Если картинки нет, аккуратно выводим ошибку
         if not image_data:
+
             try:
-                safe_error = str(last_error)[:500] if last_error else "Неизвестная ошибка"
                 bot.edit_message_text(
-                    f"❌ Ошибка генерации:\n{safe_error}",
+                    f"❌ Ошибка генерации:\n{str(last_error)[:500]}",
                     message.chat.id,
                     status.message_id
                 )
-            except Exception as e:
-                print(f"Не удалось обновить статус: {e}")
+            except Exception:
+                pass
+
             return
 
-        # Если картинка есть, удаляем статус и кидаем шедевр
         try:
-            bot.delete_message(message.chat.id, status.message_id)
+            bot.delete_message(
+                message.chat.id,
+                status.message_id
+            )
         except Exception:
             pass
 
@@ -213,8 +248,12 @@ USER REQUEST:
             reply_to_message_id=message.message_id
         )
 
-    # Запуск фонового потока
-    threading.Thread(target=task, daemon=True).start()
+    threading.Thread(
+        target=task,
+        daemon=True
+    ).start()
+
+# ==========================================================
 
 # ==========================================================
 # EDIT IMAGE
