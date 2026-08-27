@@ -103,6 +103,35 @@ def is_command(message, names):
         re.IGNORECASE
     ))
 
+# ==========================================================
+# DRAW — NANO BANANA 2
+# ==========================================================
+
+# Оставляем только Flash-модель и даем ей 3 попытки на случай сбоев сети
+DRAW_MODELS = [
+    ("gemini-3.1-flash-image", "Nano Banana 2", 3),
+]
+
+def draw_generate(model_name, prompt):
+    response = image_client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(
+                aspect_ratio="1:1",
+                image_size="2K"
+            )
+        )
+    )
+
+    data = extract_image_bytes(response)
+
+    if not data:
+        raise RuntimeError("Модель не вернула изображение.")
+
+    return data
+
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
     content_types=["text", "photo"]
@@ -130,7 +159,8 @@ USER REQUEST:
 {prompt}
 """
 
-    status = bot.reply_to(message, "🍌 Nano Banana Pro рисует...")
+    # Поменяли статусное сообщение!
+    status = bot.reply_to(message, "🍌 Nano Banana 2 рисует...")
 
     # Читом: запускаем рисование в фоне, чтобы бот не вис!
     def task():
@@ -158,7 +188,6 @@ USER REQUEST:
         # Если картинки нет, аккуратно выводим ошибку
         if not image_data:
             try:
-                # Обрезаем ошибку до 500 символов, чтобы Телеграм не подавился!
                 safe_error = str(last_error)[:500] if last_error else "Неизвестная ошибка"
                 bot.edit_message_text(
                     f"❌ Ошибка генерации:\n{safe_error}",
