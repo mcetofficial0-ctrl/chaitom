@@ -1,6 +1,101 @@
 import os
 import io
-import re
+import re@bot.message_handler(commands=["import_history"], content_types=["document", "text"])
+def import_history_command(message):
+    """Импорт истории из прикрепленного файла или через реплай (TXT, JSON, HTML)"""
+    
+    # Ищем документ либо в самом сообщении (как подпись), либо в сообщении, на которое сделали Reply
+    target_message = message if message.document else message.reply_to_message
+
+    if not target_message or not target_message.document:
+        bot.reply_to(
+            message,
+            "Сделай Reply (Ответить) на отправленный файл с командой `/import_history` "
+            "или прикрепи файл сразу с этой командой в поле 'Подпись'."
+        )
+        return
+
+    try:
+        status_msg = bot.reply_to(message, "📂 Читаю файл, ищу фразы...")
+        
+        # Забираем файл именно из target_message
+        file_info = bot.get_file(target_message.document.file_id)
+        downloaded = bot.download_file(file_info.file_path)
+        
+        # Декодируем содержимое файла
+        text_content = downloaded.decode("utf-8", errors="ignore")
+        file_name = target_message.document.file_name.lower()
+
+        raw_lines = []
+
+        # ==========================================
+        # 1. ОБРАБОТКА JSON
+        # ==========================================
+        if file_name.endswith(".json"):
+            try:
+                data = json.loads(text_content)
+                if isinstance(data, dict) and "messages" in data:
+                    for msg in data["messages"]:
+                        text_data = msg.get("text", "")
+                        if isinstance(text_data, str):
+                            raw_lines.append(text_data)
+                        elif isinstance(text_data, list):
+                            full_text = ""
+                            for part in text_data:
+                                if isinstance(part, str):
+                                    full_text += part
+                                elif isinstance(part, dict) and "text" in part:
+                                    full_text += part["text"]
+                            raw_lines.append(full_text)
+                elif isinstance(data, list):
+                    raw_lines = [str(item) for item in data if isinstance(item, (str, int))]
+            except json.JSONDecodeError:
+                bot.edit_message_text("❌ Ошибка: Невалидный JSON файл.", message.chat.id, status_msg.message_id)
+                return
+
+        # ==========================================
+        # 2. ОБРАБОТКА HTML
+        # ==========================================
+        elif file_name.endswith(".html"):
+            matches = re.findall(r'<div class="text"[^>]*>(.*?)</div>', text_content, re.DOTALL | re.IGNORECASE)
+            for match in matches:
+                clean_text = re.sub(r'<[^>]+>', ' ', match).strip()
+                clean_text = clean_text.replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&amp;', '&')
+                raw_lines.append(clean_text)
+
+        # ==========================================
+        # 3. ОБРАБОТКА TXT
+        # ==========================================
+        else:
+            raw_lines = text_content.splitlines()
+
+        # ==========================================
+        # ФИЛЬТРАЦИЯ И ЗАПИСЬ В ПАМЯТЬ
+        # ==========================================
+        added_count = 0
+        for line in raw_lines:
+            line = line.strip()
+            # Игнорируем пустые строки и команды (начинаются с /)
+            if line and not line.startswith("/"):
+                if line not in chat_history:
+                    chat_history.append(line)
+                    added_count += 1
+                    # Следим за лимитом памяти
+                    if len(chat_history) > HISTORY_LIMIT:
+                        chat_history.pop(0)
+
+        # Сохраняем новую память на диск
+        save_chat_history()
+
+        bot.edit_message_text(
+            f"✅ Успешно импортировано {added_count} новых фраз из файла `{target_message.document.file_name}`!\n"
+            f"Всего в памяти: {len(chat_history)}/{HISTORY_LIMIT}.",
+            message.chat.id, 
+            status_msg.message_id
+        )
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка при обработке файла: {e}")
 import time
 import base64
 import random
@@ -722,40 +817,43 @@ def history_status_command(message):
 
 @bot.message_handler(commands=["import_history"], content_types=["document", "text"])
 def import_history_command(message):
-    """Импорт истории из прикрепленного файла (TXT, JSON, HTML)"""
-    if not message.document:
+    """Импорт истории из прикрепленного файла или через реплай (TXT, JSON, HTML)"""
+    
+    # Ищем документ либо в самом сообщении (как подпись), либо в сообщении, на которое сделали Reply
+    target_message = message if message.document else message.reply_to_message
+
+    if not target_message or not target_message.document:
         bot.reply_to(
             message,
-            "Отправь файл (экспорт из Telegram: TXT, JSON или HTML) и в подписи укажи `/import_history`."
+            "Сделай Reply (Ответить) на отправленный файл с командой `/import_history` "
+            "или прикрепи файл сразу с этой командой в поле 'Подпись'."
         )
         return
 
     try:
         status_msg = bot.reply_to(message, "📂 Читаю файл, ищу фразы...")
         
-        file_info = bot.get_file(message.document.file_id)
+        # Забираем файл именно из target_message
+        file_info = bot.get_file(target_message.document.file_id)
         downloaded = bot.download_file(file_info.file_path)
         
         # Декодируем содержимое файла
         text_content = downloaded.decode("utf-8", errors="ignore")
-        file_name = message.document.file_name.lower()
+        file_name = target_message.document.file_name.lower()
 
         raw_lines = []
 
         # ==========================================
-        # 1. ОБРАБОТКА JSON (Стандартный экспорт ТГ)
+        # 1. ОБРАБОТКА JSON
         # ==========================================
         if file_name.endswith(".json"):
             try:
                 data = json.loads(text_content)
-                # Если это официальный экспорт Telegram
                 if isinstance(data, dict) and "messages" in data:
                     for msg in data["messages"]:
                         text_data = msg.get("text", "")
-                        # Текст может быть строкой
                         if isinstance(text_data, str):
                             raw_lines.append(text_data)
-                        # А может быть списком (если в тексте есть жирный шрифт, ссылки и т.д.)
                         elif isinstance(text_data, list):
                             full_text = ""
                             for part in text_data:
@@ -764,7 +862,6 @@ def import_history_command(message):
                                 elif isinstance(part, dict) and "text" in part:
                                     full_text += part["text"]
                             raw_lines.append(full_text)
-                # Если это просто список фраз в json
                 elif isinstance(data, list):
                     raw_lines = [str(item) for item in data if isinstance(item, (str, int))]
             except json.JSONDecodeError:
@@ -772,20 +869,17 @@ def import_history_command(message):
                 return
 
         # ==========================================
-        # 2. ОБРАБОТКА HTML (Стандартный экспорт ТГ)
+        # 2. ОБРАБОТКА HTML
         # ==========================================
         elif file_name.endswith(".html"):
-            # В телеграме текст сообщений лежит в <div class="text">...</div>
             matches = re.findall(r'<div class="text"[^>]*>(.*?)</div>', text_content, re.DOTALL | re.IGNORECASE)
             for match in matches:
-                # Меняем <br> и другие теги на пробелы, чтобы слова не слипались
                 clean_text = re.sub(r'<[^>]+>', ' ', match).strip()
-                # Возвращаем нормальные символы вместо HTML-кодов
                 clean_text = clean_text.replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&amp;', '&')
                 raw_lines.append(clean_text)
 
         # ==========================================
-        # 3. ОБРАБОТКА TXT (Простой текстовый файл)
+        # 3. ОБРАБОТКА TXT
         # ==========================================
         else:
             raw_lines = text_content.splitlines()
@@ -809,7 +903,7 @@ def import_history_command(message):
         save_chat_history()
 
         bot.edit_message_text(
-            f"✅ Успешно импортировано {added_count} новых фраз из файла `{message.document.file_name}`!\n"
+            f"✅ Успешно импортировано {added_count} новых фраз из файла `{target_message.document.file_name}`!\n"
             f"Всего в памяти: {len(chat_history)}/{HISTORY_LIMIT}.",
             message.chat.id, 
             status_msg.message_id
