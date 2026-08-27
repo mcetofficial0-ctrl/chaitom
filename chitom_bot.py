@@ -540,7 +540,7 @@ def draw_text_outline(draw, text, xy, font):
         fill="white"
     )
 
-def generate_meme(top, bottom):
+def generate_meme(top, middle, bottom):
     if not os.path.exists(TEMPLATE_NAME):
         return None
 
@@ -550,51 +550,47 @@ def generate_meme(top, bottom):
     img = Image.open(TEMPLATE_NAME).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    font_top = ImageFont.truetype(
-        FONT_NAME, 40
-    )
-
-    font_bottom = ImageFont.truetype(
-        FONT_NAME, 50
-    )
+    font_top = ImageFont.truetype(FONT_NAME, 40)
+    font_middle = ImageFont.truetype(FONT_NAME, 40)
+    font_bottom = ImageFont.truetype(FONT_NAME, 50)
 
     w, h = img.size
 
-    for line in text_wrap(
-        top,
-        font_top,
-        w * 0.9
-    ):
-
+    # --- Отрисовка верхнего кадра ---
+    y_top = 20
+    for line in text_wrap(top, font_top, w * 0.9):
         tw = font_top.getlength(line)
-
         draw_text_outline(
             draw,
             line,
-            ((w - tw) / 2, 20),
+            ((w - tw) / 2, y_top),
             font_top
         )
+        y_top += 45
 
-        break
-
-    y = h * 0.7
-
-    for line in text_wrap(
-        bottom,
-        font_bottom,
-        w * 0.9
-    ):
-
-        tw = font_bottom.getlength(line)
-
+    # --- Отрисовка центрального кадра ---
+    y_mid = h * 0.38  # Ставим текст в начало второго кадра
+    for line in text_wrap(middle, font_middle, w * 0.9):
+        tw = font_middle.getlength(line)
         draw_text_outline(
             draw,
             line,
-            ((w - tw) / 2, y),
+            ((w - tw) / 2, y_mid),
+            font_middle
+        )
+        y_mid += 45
+
+    # --- Отрисовка нижнего кадра ---
+    y_bot = h * 0.72  # Ставим текст в начало третьего кадра
+    for line in text_wrap(bottom, font_bottom, w * 0.9):
+        tw = font_bottom.getlength(line)
+        draw_text_outline(
+            draw,
+            line,
+            ((w - tw) / 2, y_bot),
             font_bottom
         )
-
-        y += 55
+        y_bot += 55
 
     img.save(
         RESULT_NAME,
@@ -612,10 +608,10 @@ def make_meme_command(message):
         )
         return
 
-    if len(chat_history) < 2:
+    if len(chat_history) < 3:
         bot.reply_to(
             message,
-            "Пока мало сообщений для мема."
+            "Пока мало сообщений для мема. Нужно хотя бы 3."
         )
         return
 
@@ -625,12 +621,13 @@ def make_meme_command(message):
     )
 
     try:
-        a, b = random.sample(
+        # Берем 3 случайных сообщения вместо 2
+        a, b, c = random.sample(
             chat_history,
-            2
+            3
         )
 
-        result = generate_meme(a, b)
+        result = generate_meme(a, b, c)
 
         if not result:
             raise RuntimeError(
