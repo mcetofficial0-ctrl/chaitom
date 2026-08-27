@@ -103,35 +103,6 @@ def is_command(message, names):
         re.IGNORECASE
     ))
 
-# ==========================================================
-# DRAW — NANO BANANA PRO
-# ==========================================================
-
-DRAW_MODELS = [
-    ("gemini-3-pro-image", "Nano Banana Pro", 3),
-    ("gemini-3.1-flash-image", "Nano Banana 2", 2),
-]
-
-def draw_generate(model_name, prompt):
-    response = image_client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(
-                aspect_ratio="1:1",
-                image_size="2K"
-            )
-        )
-    )
-
-    data = extract_image_bytes(response)
-
-    if not data:
-        raise RuntimeError("Модель не вернула изображение.")
-
-    return data
-
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
     content_types=["text", "photo"]
@@ -149,7 +120,7 @@ def draw_command(message):
         bot.reply_to(message, "Напиши, что нарисовать.")
         return
 
-    prompt = f"""
+    enh_prompt = f"""
 Create the image exactly according to the user's request.
 The request may be written in Russian. Understand Russian naturally.
 Preserve all requested objects, characters, actions, composition,
@@ -160,51 +131,61 @@ USER REQUEST:
 """
 
     status = bot.reply_to(message, "🍌 Nano Banana Pro рисует...")
-    image_data = None
-    last_error = None
 
-    for model_name, label, attempts in DRAW_MODELS:
-        for attempt in range(1, attempts + 1):
-            try:
-                print(f"DRAW {label} {attempt}/{attempts}")
-                image_data = draw_generate(model_name, prompt)
-                break
-            except Exception as e:
-                last_error = e
-                print(f"DRAW ERROR: {repr(e)}")
+    # Читом: запускаем рисование в фоне, чтобы бот не вис!
+    def task():
+        image_data = None
+        last_error = None
 
-                if not temp_error(e) or attempt == attempts:
+        for model_name, label, attempts in DRAW_MODELS:
+            for attempt in range(1, attempts + 1):
+                try:
+                    print(f"DRAW {label} {attempt}/{attempts}")
+                    image_data = draw_generate(model_name, enh_prompt)
+                    break
+                except Exception as e:
+                    last_error = e
+                    print(f"DRAW ERROR: {repr(e)}")
+
+                if not temp_error(last_error) or attempt == attempts:
                     break
 
                 time.sleep(min(2 ** attempt, 10))
 
-        if image_data:
-            break
+            if image_data:
+                break
 
-    if not image_data:
+        # Если картинки нет, аккуратно выводим ошибку
+        if not image_data:
+            try:
+                # Обрезаем ошибку до 500 символов, чтобы Телеграм не подавился!
+                safe_error = str(last_error)[:500] if last_error else "Неизвестная ошибка"
+                bot.edit_message_text(
+                    f"❌ Ошибка генерации:\n{safe_error}",
+                    message.chat.id,
+                    status.message_id
+                )
+            except Exception as e:
+                print(f"Не удалось обновить статус: {e}")
+            return
+
+        # Если картинка есть, удаляем статус и кидаем шедевр
         try:
-            bot.edit_message_text(
-                f"Ошибка генерации:\n{last_error}",
-                message.chat.id,
-                status.message_id
-            )
+            bot.delete_message(message.chat.id, status.message_id)
         except Exception:
             pass
-        return
 
-    try:
-        bot.delete_message(message.chat.id, status.message_id)
-    except Exception:
-        pass
+        file = io.BytesIO(image_data)
+        file.name = "generated.png"
 
-    file = io.BytesIO(image_data)
-    file.name = "generated.png"
+        bot.send_photo(
+            message.chat.id,
+            file,
+            reply_to_message_id=message.message_id
+        )
 
-    bot.send_photo(
-        message.chat.id,
-        file,
-        reply_to_message_id=message.message_id
-    )
+    # Запуск фонового потока
+    threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
 # EDIT IMAGE
