@@ -4,6 +4,7 @@ import re
 import time
 import base64
 import random
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -34,6 +35,39 @@ genai.configure(api_key=GEMINI_API_KEY)
 image_client = new_genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================================
+# PERSISTENT HISTORY (ПАМЯТЬ БОТА)
+# ==========================================================
+
+HISTORY_FILE = "chat_history.json"
+HISTORY_LIMIT = 1000
+
+def load_chat_history():
+    """Загружает историю из файла при старте скрипта"""
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    print(f"Загружено {len(data)} сообщений из памяти.")
+                    return data
+        except Exception as e:
+            print(f"Ошибка чтения {HISTORY_FILE}:", e)
+    return []
+
+def save_chat_history():
+    """Сохраняет текущую историю на диск"""
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(chat_history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Ошибка сохранения {HISTORY_FILE}:", e)
+
+# Инициализируем историю из файла при запуске!
+chat_history = load_chat_history()
+dialog_context = {}
+CONTEXT_LIMIT = 15
+
+# ==========================================================
 # TEXT AI
 # ==========================================================
 
@@ -62,11 +96,6 @@ model = genai.GenerativeModel(
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ],
 )
-
-chat_history = []
-HISTORY_LIMIT = 1000
-dialog_context = {}
-CONTEXT_LIMIT = 15
 
 # ==========================================================
 # HELPERS
@@ -112,7 +141,6 @@ DRAW_MODELS = [
     ("gemini-3.1-flash-image", "Nano Banana 2", 1),
 ]
 
-
 def draw_generate(model_name, prompt):
     response = image_client.models.generate_content(
         model=model_name,
@@ -133,13 +161,11 @@ def draw_generate(model_name, prompt):
 
     return data
 
-
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
     content_types=["text", "photo"]
 )
 def draw_command(message):
-
     raw = message.caption if message.photo else message.text
 
     prompt = re.sub(
@@ -172,54 +198,33 @@ USER REQUEST:
     )
 
     def task():
-
         image_data = None
         last_error = None
 
         for model_name, label, attempts in DRAW_MODELS:
-
             for attempt in range(1, attempts + 1):
-
                 try:
-
-                    print(
-                        f"DRAW {label} "
-                        f"{attempt}/{attempts}"
-                    )
-
+                    print(f"DRAW {label} {attempt}/{attempts}")
                     image_data = draw_generate(
                         model_name,
                         enh_prompt
                     )
-
-                    print(
-                        f"DRAW OK: {label}"
-                    )
-
+                    print(f"DRAW OK: {label}")
                     break
-
                 except Exception as e:
-
                     last_error = e
-
-                    print(
-                        f"DRAW ERROR {label}:",
-                        repr(e)
-                    )
+                    print(f"DRAW ERROR {label}:", repr(e))
 
                     if not temp_error(e):
                         break
 
                     if attempt < attempts:
-                        time.sleep(
-                            2 ** attempt
-                        )
+                        time.sleep(2 ** attempt)
 
             if image_data:
                 break
 
         if not image_data:
-
             try:
                 bot.edit_message_text(
                     f"❌ Ошибка генерации:\n{str(last_error)[:500]}",
@@ -228,7 +233,6 @@ USER REQUEST:
                 )
             except Exception:
                 pass
-
             return
 
         try:
@@ -252,8 +256,6 @@ USER REQUEST:
         target=task,
         daemon=True
     ).start()
-
-# ==========================================================
 
 # ==========================================================
 # EDIT IMAGE
@@ -618,7 +620,7 @@ def generate_meme(top, middle, bottom):
         y_top += 45
 
     # --- Отрисовка центрального кадра ---
-    y_mid = h * 0.38  # Ставим текст в начало второго кадра
+    y_mid = h * 0.38
     for line in text_wrap(middle, font_middle, w * 0.9):
         tw = font_middle.getlength(line)
         draw_text_outline(
@@ -630,7 +632,7 @@ def generate_meme(top, middle, bottom):
         y_mid += 45
 
     # --- Отрисовка нижнего кадра ---
-    y_bot = h * 0.72  # Ставим текст в начало третьего кадра
+    y_bot = h * 0.72
     for line in text_wrap(bottom, font_bottom, w * 0.9):
         tw = font_bottom.getlength(line)
         draw_text_outline(
@@ -660,7 +662,7 @@ def make_meme_command(message):
     if len(chat_history) < 3:
         bot.reply_to(
             message,
-            "Пока мало сообщений для мема. Нужно хотя бы 3."
+            f"Пока мало сообщений в памяти ({len(chat_history)}/{HISTORY_LIMIT}). Нужно хотя бы 3."
         )
         return
 
@@ -670,7 +672,6 @@ def make_meme_command(message):
     )
 
     try:
-        # Берем 3 случайных сообщения вместо 2
         a, b, c = random.sample(
             chat_history,
             3
@@ -708,6 +709,53 @@ def make_meme_command(message):
         )
 
 # ==========================================================
+# HISTORY MANAGEMENT COMMANDS
+# ==========================================================
+
+@bot.message_handler(commands=["history", "save_history"])
+def history_status_command(message):
+    bot.reply_to(
+        message,
+        f"📊 Память бота:\nСохранено фраз: {len(chat_history)}/{HISTORY_LIMIT}.\n"
+        f"Все сообщения авто-сохраняются в `chat_history.json` и выдерживают любой перезапуск."
+    )
+
+@bot.message_handler(commands=["import_history"], content_types=["document", "text"])
+def import_history_command(message):
+    """Импорт истории из прикрепленного .txt файла"""
+    if not message.document:
+        bot.reply_to(
+            message,
+            "Отправь текстовый `.txt` файл со списком фраз/экспортом чата и в подписи укажи `/import_history`."
+        )
+        return
+
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded = bot.download_file(file_info.file_path)
+
+        text_content = downloaded.decode("utf-8", errors="ignore")
+        lines = [line.strip() for line in text_content.splitlines() if line.strip() and not line.strip().startswith("/")]
+
+        added_count = 0
+        for line in lines:
+            if line not in chat_history:
+                chat_history.append(line)
+                added_count += 1
+                if len(chat_history) > HISTORY_LIMIT:
+                    chat_history.pop(0)
+
+        save_chat_history()
+
+        bot.reply_to(
+            message,
+            f"✅ Успешно импортировано {added_count} новых фраз из файла!\nВсего в памяти: {len(chat_history)}."
+        )
+
+    except Exception as e:
+        bot.reply_to(message, f"Ошибка при обработке файла: {e}")
+
+# ==========================================================
 # START
 # ==========================================================
 
@@ -718,7 +766,9 @@ def start_command(message):
         "/draw — картинка\n"
         "/video — видео\n"
         "/edit — редактирование фото\n"
-        "/make_meme — мем"
+        "/make_meme — мем\n"
+        "/history — статус памяти фраз\n"
+        "/import_history — загрузить текстовый файл с фразами"
     )
 
 # ==========================================================
@@ -736,7 +786,10 @@ def handle_message(message):
         for cmd in [
             ["draw", "gen"],
             ["video", "vid"],
-            ["edit"]
+            ["edit"],
+            ["make_meme"],
+            ["history", "save_history"],
+            ["import_history"]
         ]
     ):
         return
@@ -745,6 +798,7 @@ def handle_message(message):
     text = (message.text or message.caption or "").strip()
     user_name = message.from_user.first_name or "Аноним"
 
+    # Запись фраз в память (сохраняется в JSON при каждом новом сообщении)
     if (
         message.chat.type in ["group", "supergroup"]
         and text
@@ -755,6 +809,9 @@ def handle_message(message):
 
         if len(chat_history) > HISTORY_LIMIT:
             chat_history.pop(0)
+
+        # Автоматическое сохранение при появлении новой фразы
+        save_chat_history()
 
     dialog_context.setdefault(chat_id, [])
 
@@ -914,6 +971,5 @@ threading.Thread(
 
 if __name__ == "__main__":
     print("Читом бот запущен")
-    print("DRAW: Nano Banana Pro")
-    print("VIDEO: Veo 3.1 Fast")
+    print(f"Загружено {len(chat_history)} фраз в память")
     bot.infinity_polling()
