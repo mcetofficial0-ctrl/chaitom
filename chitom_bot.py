@@ -393,21 +393,14 @@ def upload_image_to_pixazo(image_bytes):
 
 
 def edit_image_pixazo(image_bytes, user_prompt):
-    input_url = upload_image_to_pixazo(
-        image_bytes
-    )
+    """Синхронное image-to-image редактирование через SD 3.5."""
+    input_url = upload_image_to_pixazo(image_bytes)
 
     prompt = f"""
-Edit the source image according to this instruction:
-
-{user_prompt}
-
-Preserve the original subject, identity, composition,
-camera angle, lighting and background unless the user
-explicitly asks to change them.
-
-Make only the requested changes.
-Do not redesign the entire image.
+Edit the provided image according to the user's instruction.
+Keep the original subject, identity, composition, camera angle,
+lighting, colors and background unless the instruction explicitly
+asks to change them. Make only the requested changes.
 
 USER REQUEST:
 {user_prompt}
@@ -417,94 +410,76 @@ USER REQUEST:
         "prompt": prompt,
         "image": input_url,
         "negative_prompt": (
-            "blurry, low quality, distorted, "
-            "duplicate objects, watermark"
+            "blurry, low quality, distorted, duplicate objects, watermark"
         ),
         "aspect_ratio": "1:1",
         "cfg": 5,
-        "steps": 35,
-        "prompt_strength": 0.65,
-        "output_format": "png",
-        "output_quality": 100,
+        "steps": 20,
+        "output_format": "webp",
+        "output_quality": 90,
+        "prompt_strength": 0.85,
     }
+
+    print("EDIT: отправляю запрос Pixazo SD3.5")
 
     response = requests.post(
         EDIT_ENDPOINT,
         headers=pixazo_headers(),
         json=payload,
-        timeout=(15, 60)
+        timeout=(10, 75)
     )
 
-    response.raise_for_status()
+    # Не прячем тело ответа — это сразу покажет причину ошибки.
+    if not response.ok:
+        try:
+            details = response.json()
+        except Exception:
+            details = response.text[:1000]
+        raise RuntimeError(
+            f"Pixazo HTTP {response.status_code}: {details}"
+        )
 
     result = response.json()
+    print("EDIT PIXAZO RESPONSE:", result)
 
-    # На случай асинхронного ответа. Не ждём бесконечно.
-    status = str(result.get("status", "")).upper()
-    request_id = result.get("request_id") or result.get("id")
-
-    if status in {"QUEUED", "PROCESSING", "PENDING"} and request_id:
-        polling_url = result.get("polling_url") or f"{PIXAZO_BASE}/v2/requests/status/{request_id}"
-        deadline = time.time() + 120
-
-        while time.time() < deadline:
-            time.sleep(5)
-
-            poll = requests.get(
-                polling_url,
-                headers={"Ocp-Apim-Subscription-Key": PIXAZO_API_KEY},
-                timeout=(10, 30)
-            )
-            poll.raise_for_status()
-            result = poll.json()
-            status = str(result.get("status", "")).upper()
-
-            if status in {"COMPLETED", "SUCCEEDED", "SUCCESS"}:
-                break
-
-            if status in {"FAILED", "ERROR", "CANCELED", "CANCELLED"}:
-                raise RuntimeError(f"Pixazo завершил задачу со статусом {status}: {result}")
-        else:
-            raise TimeoutError("Pixazo не завершил редактирование за 120 секунд.")
-
-    print(
-        "EDIT PIXAZO RESPONSE:",
-        result
+    # По актуальной документации SD 3.5 ответ содержит output URL.
+    output_url = (
+        result.get("output")
+        or result.get("imageUrl")
+        or result.get("image_url")
+        or result.get("url")
     )
 
-    output_obj = result.get("output")
-    output_url = (
-        output_obj.get("media_url") if isinstance(output_obj, dict) else output_obj
-    ) or result.get("imageUrl") or result.get("image_url") or result.get("url")
-
-    if not output_url and isinstance(output_obj, dict):
-        output_url = output_obj.get("url")
+    # Если API вдруг вернул вложенный output.
+    if isinstance(output_url, dict):
+        output_url = (
+            output_url.get("url")
+            or output_url.get("media_url")
+        )
 
     if not output_url:
         raise RuntimeError(
-            f"Pixazo не вернул готовое изображение: {result}"
+            f"Pixazo не вернул URL результата: {result}"
         )
 
     image_response = requests.get(
         output_url,
         timeout=(10, 45)
     )
-    image_response.raise_for_status()
+
+    if not image_response.ok:
+        raise RuntimeError(
+            f"Не удалось скачать результат Pixazo: HTTP {image_response.status_code}"
+        )
 
     result_bytes = image_response.content
 
     if not result_bytes:
-        raise RuntimeError(
-            "Pixazo вернул пустой файл."
-        )
+        raise RuntimeError("Pixazo вернул пустой файл.")
 
-    output = io.BytesIO(
-        result_bytes
-    )
-
+    output = io.BytesIO(result_bytes)
+    output.name = "edited.webp"
     output.seek(0)
-    output.name = "edited.png"
-
     return output
 
 
