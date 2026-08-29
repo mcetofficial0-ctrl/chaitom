@@ -13,6 +13,7 @@ import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
 from PIL import Image, ImageDraw, ImageFont, ImageFile
+from huggingface_hub import InferenceClient
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -22,17 +23,21 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("Не задан TELEGRAM_TOKEN")
 if not GEMINI_API_KEY:
     raise RuntimeError("Не задан GEMINI_API_KEY")
+if not HF_TOKEN:
+    raise RuntimeError("Не задан HF_TOKEN")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
 genai.configure(api_key=GEMINI_API_KEY)
 image_client = new_genai.Client(api_key=GEMINI_API_KEY)
+hf_client = InferenceClient(api_key=HF_TOKEN, provider="auto")
 
 # ==========================================================
 # PERSISTENT HISTORY (ПАМЯТЬ БОТА)
@@ -133,33 +138,59 @@ def is_command(message, names):
     ))
 
 # ==========================================================
-# DRAW — NANO BANANA 2 LITE (FAST)
+# DRAW — HUGGING FACE (БЕСПЛАТНЫЕ КРЕДИТЫ)
 # ==========================================================
 
+# Основная модель для генерации.
+# Hugging Face рекомендует FLUX.1-Krea-dev и Qwen-Image
+# для text-to-image. Используем Qwen-Image как основной вариант.
 DRAW_MODELS = [
-    ("gemini-3.1-flash-lite-image", "Nano Banana 2 Lite", 2),
-    ("gemini-3.1-flash-image", "Nano Banana 2", 1),
+    "Qwen/Qwen-Image",
+    "black-forest-labs/FLUX.1-schnell",
 ]
 
-def draw_generate(model_name, prompt):
-    response = image_client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(
-                aspect_ratio="1:1",
-                image_size="1K"
+
+def draw_generate(prompt):
+    last_error = None
+
+    for model_name in DRAW_MODELS:
+        try:
+            print(f"DRAW: Hugging Face -> {model_name}")
+
+            image = hf_client.text_to_image(
+                prompt=prompt,
+                model=model_name,
+                width=1024,
+                height=1024,
             )
-        )
+
+            if image is None:
+                raise RuntimeError(
+                    f"{model_name} не вернула изображение."
+                )
+
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+            output.seek(0)
+            output.name = "generated.png"
+
+            print(f"DRAW OK: {model_name}")
+            return output
+
+        except Exception as e:
+            last_error = e
+            print(
+                f"DRAW ERROR {model_name}:",
+                repr(e)
+            )
+
+            # Пробуем следующую модель.
+            continue
+
+    raise RuntimeError(
+        f"Не удалось создать изображение через Hugging Face: {last_error}"
     )
 
-    data = extract_image_bytes(response)
-
-    if not data:
-        raise RuntimeError("Модель не вернула изображение.")
-
-    return data
 
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
@@ -183,10 +214,22 @@ def draw_command(message):
         return
 
     enh_prompt = f"""
-Create the image exactly according to the user's request.
+Create a high-quality image exactly according to the user's request.
+
 The request may be written in Russian. Understand Russian naturally.
-Preserve the requested objects, characters, actions, composition,
-lighting, style and text.
+
+Preserve all requested:
+- objects
+- characters
+- actions
+- composition
+- camera angle
+- lighting
+- atmosphere
+- artistic style
+- visible text
+
+Do not add unrelated objects.
 
 USER REQUEST:
 {prompt}
@@ -194,46 +237,156 @@ USER REQUEST:
 
     status = bot.reply_to(
         message,
-        "🍌 Рисую..."
+        "🎨 Рисую через Hugging Face..."
     )
 
     def task():
-        image_data = None
-        last_error = None
+        try:
+            result = draw_generate(enh_prompt)
 
-        for model_name, label, attempts in DRAW_MODELS:
-            for attempt in range(1, attempts + 1):
-                try:
-                    print(f"DRAW {label} {attempt}/{attempts}")
-                    image_data = draw_generate(
-                        model_name,
-                        enh_prompt
-                    )
-                    print(f"DRAW OK: {label}")
-                    break
-                except Exception as e:
-                    last_error = e
-                    print(f"DRAW ERROR {label}:", repr(e))
-
-                    if not temp_error(e):
-                        break
-
-                    if attempt < attempts:
-                        time.sleep(2 ** attempt)
-
-            if image_data:
-                break
-
-        if not image_data:
             try:
-                bot.edit_message_text(
-                    f"❌ Ошибка генерации:\n{str(last_error)[:500]}",
+                bot.delete_message(
                     message.chat.id,
                     status.message_id
                 )
             except Exception:
                 pass
-            return
+
+            result.seek(0)
+
+            bot.send_photo(
+                message.chat.id,
+                result,
+                reply_to_message_id=message.message_id
+            )
+
+        except Exception as e:
+            print("DRAW FINAL ERROR:", repr(e))
+
+            try:
+                bot.edit_message_text(
+                    f"❌ Ошибка генерации:\n{str(e)[:700]}",
+                    message.chat.id,
+                    status.message_id
+                )
+            except Exception:
+                pass
+
+    threading.Thread(
+        target=task,
+        daemon=True
+    ).start()
+
+# ==========================================================
+# EDIT IMAGE — QWEN IMAGE EDIT через HUGGING FACE
+# ==========================================================
+
+EDIT_MODELS = [
+    "Qwen/Qwen-Image-Edit",
+    "black-forest-labs/FLUX.1-Kontext-dev",
+]
+
+
+def edit_image(image_bytes, user_prompt):
+    last_error = None
+
+    # Передаём оригинальные байты непосредственно image-to-image модели.
+    for model_name in EDIT_MODELS:
+        try:
+            print(f"EDIT: Hugging Face -> {model_name}")
+
+            result_image = hf_client.image_to_image(
+                image_bytes,
+                prompt=user_prompt.strip(),
+                model=model_name,
+            )
+
+            if result_image is None:
+                raise RuntimeError(
+                    f"{model_name} не вернула изображение."
+                )
+
+            output = io.BytesIO()
+            result_image.save(output, format="PNG")
+            output.seek(0)
+            output.name = "edited.png"
+
+            print(f"EDIT OK: {model_name}")
+            return output
+
+        except Exception as e:
+            last_error = e
+            print(
+                f"EDIT ERROR {model_name}:",
+                repr(e)
+            )
+
+            continue
+
+    raise RuntimeError(
+        f"Не удалось отредактировать изображение через Hugging Face: {last_error}"
+    )
+
+
+@bot.message_handler(
+    func=lambda m: is_command(m, ["edit"]),
+    content_types=["text", "photo"]
+)
+def edit_command(message):
+    # Фото может быть прикреплено прямо к команде
+    # или находиться в сообщении, на которое сделан reply.
+    target = (
+        message
+        if message.photo
+        else message.reply_to_message
+    )
+
+    if not target or not target.photo:
+        bot.reply_to(
+            message,
+            "Прикрепи фото к /edit или сделай reply на фото."
+        )
+        return
+
+    raw = (
+        message.caption
+        if message.photo
+        else message.text
+    )
+
+    prompt = re.sub(
+        r"^/edit(@\w+)?\s*",
+        "",
+        raw or "",
+        flags=re.IGNORECASE
+    ).strip()
+
+    if not prompt:
+        bot.reply_to(
+            message,
+            "Напиши, что изменить на фото.\n"
+            "Например: /edit добавь человеку солнцезащитные очки"
+        )
+        return
+
+    status = bot.reply_to(
+        message,
+        "🎨 Редактирую через Qwen Image Edit..."
+    )
+
+    try:
+        info = bot.get_file(
+            target.photo[-1].file_id
+        )
+
+        image_bytes = bot.download_file(
+            info.file_path
+        )
+
+        result = edit_image(
+            image_bytes,
+            prompt
+        )
 
         try:
             bot.delete_message(
@@ -243,114 +396,8 @@ USER REQUEST:
         except Exception:
             pass
 
-        file = io.BytesIO(image_data)
-        file.name = "generated.png"
-
-        bot.send_photo(
-            message.chat.id,
-            file,
-            reply_to_message_id=message.message_id
-        )
-
-    threading.Thread(
-        target=task,
-        daemon=True
-    ).start()
-
-# ==========================================================
-# EDIT IMAGE
-# ==========================================================
-
-def edit_image(image_bytes, user_prompt):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    prompt = f"""
-Edit the provided image according to the user's request.
-
-The request may be written in Russian.
-Preserve the subject, identity, composition, perspective,
-lighting and background unless explicitly asked to change them.
-
-USER REQUEST:
-{user_prompt}
-
-Return only the edited image.
-"""
-
-    for model_name, attempts in [
-        ("gemini-3.1-flash-image", 3),
-        ("gemini-3.1-flash-lite-image", 2)
-    ]:
-        for attempt in range(attempts):
-            try:
-                response = image_client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt, image],
-                    config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE"]
-                    )
-                )
-
-                data = extract_image_bytes(response)
-                if data:
-                    out = io.BytesIO(data)
-                    out.name = "edited.png"
-                    out.seek(0)
-                    return out
-
-                raise RuntimeError(
-                    f"{model_name} не вернула изображение."
-                )
-
-            except Exception as e:
-                if not temp_error(e) or attempt == attempts - 1:
-                    if model_name == "gemini-3.1-flash-lite-image":
-                        raise
-                    break
-                time.sleep(min(2 ** (attempt + 1), 10))
-
-    raise RuntimeError("Не удалось отредактировать изображение.")
-
-@bot.message_handler(
-    func=lambda m: is_command(m, ["edit"]),
-    content_types=["text", "photo"]
-)
-def edit_command(message):
-    target = message if message.photo else message.reply_to_message
-
-    if not target or not target.photo:
-        bot.reply_to(
-            message,
-            "Прикрепи фото к /edit или сделай reply на фото."
-        )
-        return
-
-    raw = message.caption if message.photo else message.text
-    prompt = re.sub(
-        r"^/edit(@\w+)?\s*",
-        "",
-        raw or "",
-        flags=re.IGNORECASE
-    ).strip()
-
-    if not prompt:
-        bot.reply_to(message, "Напиши, что изменить на фото.")
-        return
-
-    status = bot.reply_to(message, "Редактирую изображение...")
-
-    try:
-        info = bot.get_file(target.photo[-1].file_id)
-        data = bot.download_file(info.file_path)
-
-        result = edit_image(data, prompt)
-
-        try:
-            bot.delete_message(message.chat.id, status.message_id)
-        except Exception:
-            pass
-
         result.seek(0)
+
         bot.send_photo(
             message.chat.id,
             result,
@@ -358,7 +405,8 @@ def edit_command(message):
         )
 
     except Exception as e:
-        print("EDIT ERROR:", repr(e))
+        print("EDIT FINAL ERROR:", repr(e))
+
         try:
             bot.edit_message_text(
                 f"Ошибка редактирования:\n{e}",
