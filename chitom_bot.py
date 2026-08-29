@@ -89,7 +89,7 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 Не используй звездочки и markdown."""
 
 model = genai.GenerativeModel(
-    "gemini-1.5-flash-lite",  # Бесплатная, быстрая модель для текста и зрения
+    "gemini-3.6-flash",  # Возвращаем нашу стабильную рабочую версию!
     system_instruction=SYSTEM_PROMPT,
     safety_settings=[
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
