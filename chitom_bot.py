@@ -6,6 +6,7 @@ import base64
 import random
 import json
 import threading
+import secrets
 import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -24,6 +25,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 PIXAZO_API_KEY = os.environ.get("PIXAZO_API_KEY")
+PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
@@ -356,52 +358,38 @@ EDIT_ENDPOINT = (
     "https://gateway.pixazo.ai/sd3-5/v1/r-sd-3-5-large"
 )
 
+TEMP_IMAGES = {}
+TEMP_IMAGE_TTL = 300
 
-def upload_image_to_pixazo(image_bytes):
-    """
-    Pixazo image-to-image требует публичный URL исходного изображения.
-    В этом API прямо передать Telegram bytes нельзя.
-    Поэтому сначала загружаем изображение на временный публичный image host.
-    """
-    # Используем tmpfiles.org для временного публичного URL.
-    # Если сервис недоступен, будет понятная ошибка.
-    response = requests.post(
-        "https://tmpfiles.org/api/v1/upload",
-        files={
-            "file": (
-                "input.jpg",
-                image_bytes,
-                "image/jpeg"
-            )
-        },
-        timeout=60
-    )
-    response.raise_for_status()
+def cleanup_temp_images():
+    now = time.time()
+    for token, item in list(TEMP_IMAGES.items()):
+        if item["expires"] < now:
+            TEMP_IMAGES.pop(token, None)
 
-    data = response.json()
 
-    raw_url = (
-        data.get("data", {})
-        .get("url")
-    )
-
-    if not raw_url:
+def make_public_image_url(image_bytes):
+    base = PUBLIC_BASE_URL
+    if not base:
         raise RuntimeError(
-            f"Не удалось получить URL временного файла: {data}"
+            "Не найден публичный URL Render. Добавь переменную PUBLIC_BASE_URL "
+            "с URL своего Render Web Service."
         )
 
-    # tmpfiles.org возвращает страницу /dl/... для прямого скачивания.
-    public_url = raw_url.replace(
-        "tmpfiles.org/",
-        "tmpfiles.org/dl/"
-    )
+    cleanup_temp_images()
+    token = secrets.token_urlsafe(24)
+    TEMP_IMAGES[token] = {
+        "data": image_bytes,
+        "expires": time.time() + TEMP_IMAGE_TTL
+    }
+    return f"{base}/_tmp_image/{token}"
 
-    print(
-        "EDIT INPUT URL:",
-        public_url
-    )
 
-    return public_url
+def upload_image_to_pixazo(image_bytes):
+    """Создаёт временный публичный URL на самом Render-сервисе."""
+    url = make_public_image_url(image_bytes)
+    print("EDIT INPUT URL:", url)
+    return url
 
 
 def edit_image_pixazo(image_bytes, user_prompt):
@@ -444,24 +432,53 @@ USER REQUEST:
         EDIT_ENDPOINT,
         headers=pixazo_headers(),
         json=payload,
-        timeout=180
+        timeout=(15, 60)
     )
 
     response.raise_for_status()
 
     result = response.json()
 
+    # На случай асинхронного ответа. Не ждём бесконечно.
+    status = str(result.get("status", "")).upper()
+    request_id = result.get("request_id") or result.get("id")
+
+    if status in {"QUEUED", "PROCESSING", "PENDING"} and request_id:
+        polling_url = result.get("polling_url") or f"{PIXAZO_BASE}/v2/requests/status/{request_id}"
+        deadline = time.time() + 120
+
+        while time.time() < deadline:
+            time.sleep(5)
+
+            poll = requests.get(
+                polling_url,
+                headers={"Ocp-Apim-Subscription-Key": PIXAZO_API_KEY},
+                timeout=(10, 30)
+            )
+            poll.raise_for_status()
+            result = poll.json()
+            status = str(result.get("status", "")).upper()
+
+            if status in {"COMPLETED", "SUCCEEDED", "SUCCESS"}:
+                break
+
+            if status in {"FAILED", "ERROR", "CANCELED", "CANCELLED"}:
+                raise RuntimeError(f"Pixazo завершил задачу со статусом {status}: {result}")
+        else:
+            raise TimeoutError("Pixazo не завершил редактирование за 120 секунд.")
+
     print(
         "EDIT PIXAZO RESPONSE:",
         result
     )
 
+    output_obj = result.get("output")
     output_url = (
-        result.get("output")
-        or result.get("imageUrl")
-        or result.get("image_url")
-        or result.get("url")
-    )
+        output_obj.get("media_url") if isinstance(output_obj, dict) else output_obj
+    ) or result.get("imageUrl") or result.get("image_url") or result.get("url")
+
+    if not output_url and isinstance(output_obj, dict):
+        output_url = output_obj.get("url")
 
     if not output_url:
         raise RuntimeError(
@@ -470,7 +487,7 @@ USER REQUEST:
 
     image_response = requests.get(
         output_url,
-        timeout=90
+        timeout=(10, 45)
     )
     image_response.raise_for_status()
 
@@ -1248,11 +1265,28 @@ def handle_message(message):
 class DummyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+        if self.path.startswith("/_tmp_image/"):
+            token = self.path.rsplit("/", 1)[-1]
+            cleanup_temp_images()
+            item = TEMP_IMAGES.get(token)
+
+            if not item:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            data = item["data"]
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(
-            b"Chaitom bot is running"
-        )
+        self.wfile.write(b"Chaitom bot is running")
 
     def do_HEAD(self):
         self.send_response(200)
