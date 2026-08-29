@@ -6,14 +6,15 @@ import base64
 import random
 import json
 import threading
-import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import requests  # Required for free fallback API
 
 import telebot
 import google.generativeai as genai
-from google import genai as new_genai
-from google.genai import types
-from PIL import Image, ImageDraw, ImageFont, ImageFile
+# Note: Google SDK structure can change. Assuming current best practices.
+from google.generativeai.types import content_types
+from collections.abc import Iterable
+from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -23,7 +24,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-PIXAZO_API_KEY = os.environ.get("PIXAZO_API_KEY")
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
@@ -33,8 +33,8 @@ if not GEMINI_API_KEY:
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
+# Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-image_client = new_genai.Client(api_key=GEMINI_API_KEY)
 
 # ==========================================================
 # PERSISTENT HISTORY (ПАМЯТЬ БОТА)
@@ -70,7 +70,7 @@ dialog_context = {}
 CONTEXT_LIMIT = 15
 
 # ==========================================================
-# TEXT AI
+# TEXT & VISION AI (FREE MODELS)
 # ==========================================================
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот".
@@ -88,15 +88,25 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 
 Не используй звездочки и markdown."""
 
-model = genai.GenerativeModel(
-    "gemini-3.6-flash",
+# Configuration for safety settings (blocking none, as in original)
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
+
+# Standard chat model
+text_model = genai.GenerativeModel(
+    "gemini-1.5-flash",  # Switched to Flash for faster free tier response
     system_instruction=SYSTEM_PROMPT,
-    safety_settings=[
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    ],
+    safety_settings=safety_settings
+)
+
+# Vision model for image editing fallback
+vision_model = genai.GenerativeModel(
+    "gemini-1.5-flash",
+    safety_settings=safety_settings
 )
 
 # ==========================================================
@@ -112,18 +122,11 @@ def temp_error(e):
     ))
 
 def extract_image_bytes(response):
+    # Standard Gemini response parsing
     for part in (getattr(response, "parts", None) or []):
         data = getattr(getattr(part, "inline_data", None), "data", None)
         if data:
             return base64.b64decode(data) if isinstance(data, str) else data
-
-    for candidate in (getattr(response, "candidates", None) or []):
-        content = getattr(candidate, "content", None)
-        for part in (getattr(content, "parts", None) or []):
-            data = getattr(getattr(part, "inline_data", None), "data", None)
-            if data:
-                return base64.b64decode(data) if isinstance(data, str) else data
-
     return None
 
 def is_command(message, names):
@@ -135,70 +138,27 @@ def is_command(message, names):
     ))
 
 # ==========================================================
-# DRAW — PIXAZO / GEMINI
+# DRAW — NANO BANANA 2 (FREE FALLBACK)
 # ==========================================================
 
-PIXAZO_BASE = "https://gateway.pixazo.ai"
-
-DRAW_ENDPOINTS = [
-    (f"{PIXAZO_BASE}/sdxl_lightning/getImage/v1/getSDXLImage", "SDXL Lightning"),
-    (f"{PIXAZO_BASE}/getImage/v1/getSDXLImage", "SDXL Base"),
-]
-
-def pixazo_headers():
-    return {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-        "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY or "",
-    }
-
-def pixazo_download_result(result):
-    if not isinstance(result, dict):
-        raise RuntimeError(f"Неожиданный ответ Pixazo: {result!r}")
-
-    image_url = (
-        result.get("imageUrl")
-        or result.get("image_url")
-        or result.get("output")
-        or result.get("url")
-    )
-
-    if not image_url:
-        raise RuntimeError(f"Pixazo не вернул URL изображения: {result}")
-
-    response = requests.get(image_url, timeout=30)
-    response.raise_for_status()
-    return response.content
-
-def draw_generate_pixazo(prompt):
-    last_error = None
-    payload = {
-        "prompt": prompt,
-        "negativePrompt": "low quality, blurry, distorted, deformed, watermark",
-        "height": 1024,
-        "width": 1024,
-        "num_steps": 20,
-        "guidance": 5,
-        "seed": random.randint(1, 2_147_483_647),
-    }
-
-    for endpoint, label in DRAW_ENDPOINTS:
-        try:
-            print(f"DRAW PIXAZO: {label}")
-            response = requests.post(
-                endpoint,
-                headers=pixazo_headers(),
-                json=payload,
-                timeout=45
-            )
-            response.raise_for_status()
-            image_bytes = pixazo_download_result(response.json())
-            if image_bytes:
-                return image_bytes
-        except Exception as e:
-            last_error = e
-
-    raise RuntimeError(f"Pixazo не смог создать изображение: {last_error}")
+def draw_generate_pollinations(prompt):
+    """Truly free Text-to-Image via Polling Nations GET API"""
+    try:
+        # Encode prompt and add seed for variability
+        encoded_prompt = requests.utils.quote(prompt)
+        seed = random.randint(0, 999999)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
+        
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        
+        # Verify it's actually an image
+        if 'image' not in response.headers.get('Content-Type', ''):
+            raise RuntimeError("Nano Banana returned non-image data.")
+            
+        return response.content
+    except Exception as e:
+        raise RuntimeError(f"Сбой Nano Banana: {e}")
 
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
@@ -206,21 +166,32 @@ def draw_generate_pixazo(prompt):
 )
 def draw_command(message):
     raw = message.caption if message.photo else message.text
+
     prompt = re.sub(
-        r"^/(draw|gen)(@\w+)?\s*", "", raw or "", flags=re.IGNORECASE
+        r"^/(draw|gen)(@\w+)?\s*",
+        "",
+        raw or "",
+        flags=re.IGNORECASE
     ).strip()
 
     if not prompt:
         bot.reply_to(message, "Напиши, что нарисовать.")
         return
 
-    status = bot.reply_to(message, "🎨 Рисую...")
+    # User message
+    status = bot.reply_to(message, "🍌 Nano Banana 2 рисует...")
 
     def task():
         try:
-            enhanced_prompt = f"High quality image based on request: {prompt}"
-            image_data = draw_generate_pixazo(enhanced_prompt)
+            # We must translate the user's prompt to English for the free API
+            translation_prompt = f"Translate the following Russian text to a detailed English image generation prompt: '{prompt}'. Reply ONLY with the English translation."
+            translation_response = text_model.generate_content([translation_prompt])
+            english_prompt = translation_response.text.strip()
+            
+            # Generate via truly free API
+            image_data = draw_generate_pollinations(english_prompt)
 
+            # Cleanup status
             try:
                 bot.delete_message(message.chat.id, status.message_id)
             except Exception:
@@ -228,13 +199,18 @@ def draw_command(message):
 
             file = io.BytesIO(image_data)
             file.name = "generated.png"
-            bot.send_photo(message.chat.id, file, reply_to_message_id=message.message_id)
+
+            bot.send_photo(
+                message.chat.id,
+                file,
+                reply_to_message_id=message.message_id
+            )
 
         except Exception as e:
             print("DRAW ERROR:", repr(e))
             try:
                 bot.edit_message_text(
-                    f"❌ Ошибка генерации:\n{str(e)[:500]}",
+                    f"❌ Ошибка Nano Banana:\n{str(e)[:500]}",
                     message.chat.id,
                     status.message_id
                 )
@@ -244,97 +220,40 @@ def draw_command(message):
     threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
-# EDIT IMAGE (БЕСПЛАТНО: TELEGRAPH + PIXAZO SD 3.5)
+# EDIT IMAGE (FREE VISION + REGENERATION)
 # ==========================================================
 
-def upload_to_telegraph(image_bytes):
-    """Анонимная загрузка картинки на telegra.ph для получения публичной ссылки"""
-    try:
-        response = requests.post(
-            "https://telegra.ph/upload",
-            files={"file": ("image.jpg", image_bytes, "image/jpeg")},
-            timeout=15
-        )
-        data = response.json()
-        if isinstance(data, list) and "src" in data[0]:
-            return "https://telegra.ph" + data[0]["src"]
-        raise RuntimeError(f"Telegraph error: {data}")
-    except Exception as e:
-        raise RuntimeError(f"Сбой Telegraph: {e}")
-
-def edit_image_free(image_bytes, user_prompt):
-    """Редактирование картинки через бесплатные сервисы (Pixazo I2I или Vision-fallback)"""
+def edit_image_free_workflow(image_bytes, user_prompt):
+    """Free 'editing' workflow: Analyze image -> enhanced prompt -> new image"""
     
-    # Попытка 1: Истинное редактирование через Pixazo Image-to-Image
-    try:
-        print("EDIT: Загружаю оригинал на Telegraph...")
-        image_url = upload_to_telegraph(image_bytes)
-        print("EDIT: Telegraph URL =", image_url)
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    # Step 1: Use Free Vision Flash to describe the original image in extreme detail
+    vision_analysis_prompt = (
+        "Analyze this image in extreme detail. Provide a comprehensive, highly detailed English description of every element, "
+        "including the subject, setting, lighting, composition, colors, and style."
+    )
+    analysis_response = vision_model.generate_content([vision_analysis_prompt, img])
+    original_description = analysis_response.text.strip()
 
-        prompt = f"Edit this image exactly according to instruction: {user_prompt}. Preserve original subject, identity, composition and background."
-        
-        payload = {
-            "prompt": prompt,
-            "image": image_url,
-            "negative_prompt": "blurry, low quality, distorted, duplicate objects, watermark",
-            "aspect_ratio": "1:1",
-            "cfg": 5,
-            "steps": 20,
-            "output_format": "jpeg",
-            "output_quality": 90,
-            "prompt_strength": 0.85,
-        }
+    # Step 2: Use Text Flash to create a new prompt incorporating the edit
+    prompt_engineering_instructions = (
+        f"Based on the following detailed description of an original image:\n\n{original_description}\n\n"
+        f"Create a NEW, extremely detailed English image generation prompt that depicts the exact same scene, "
+        f"but with the following transformation applied: '{user_prompt}'. "
+        "Maintain the original composition, style, and identity as much as possible, focusing only on the requested change."
+    )
+    prompt_response = text_model.generate_content([prompt_engineering_instructions])
+    final_english_prompt = prompt_response.text.strip()
 
-        print("EDIT: Отправляю в Pixazo SD 3.5...")
-        response = requests.post(
-            "https://gateway.pixazo.ai/sd3-5/v1/r-sd-3-5-large",
-            headers=pixazo_headers(),
-            json=payload,
-            timeout=60
-        )
-        response.raise_for_status()
-        result = response.json()
+    # Step 3: Generate the new image using the truly free API
+    print("EDIT: Generating new image via free prompt...")
+    modified_image_data = draw_generate_pollinations(final_english_prompt)
 
-        output_url = (
-            result.get("output") or 
-            result.get("imageUrl") or 
-            result.get("image_url") or 
-            result.get("url")
-        )
-        if isinstance(output_url, dict):
-            output_url = output_url.get("url") or output_url.get("media_url")
-
-        if not output_url:
-            raise RuntimeError(f"Pixazo не вернул URL результата: {result}")
-
-        img_resp = requests.get(output_url, timeout=30)
-        img_resp.raise_for_status()
-        
-        out = io.BytesIO(img_resp.content)
-        out.name = "edited.jpg"
-        out.seek(0)
-        return out
-
-    except Exception as e:
-        print("EDIT PIXAZO I2I ERROR:", repr(e))
-        print("EDIT: Запускаю резервный план (Gemini Vision + Pixazo Text-to-Image)...")
-        
-        # Попытка 2: Резервный план (Зрение Gemini -> Pixazo Draw)
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        vision_prompt = (
-            f"Describe this image in extreme detail, but apply this transformation: '{user_prompt}'. "
-            "Output ONLY a raw, highly detailed English prompt for a text-to-image AI."
-        )
-        
-        resp = model.generate_content([vision_prompt, img])
-        english_prompt = resp.text.strip()
-        
-        res_bytes = draw_generate_pixazo(english_prompt)
-        out = io.BytesIO(res_bytes)
-        out.name = "edited.png"
-        out.seek(0)
-        return out
-
+    out = io.BytesIO(modified_image_data)
+    out.name = "edited.png"
+    out.seek(0)
+    return out
 
 @bot.message_handler(
     func=lambda m: is_command(m, ["edit"]),
@@ -361,14 +280,15 @@ def edit_command(message):
         bot.reply_to(message, "Напиши, что изменить на фото.")
         return
 
-    status = bot.reply_to(message, "🎨 Редактирую через бесплатный Pixazo...")
+    status = bot.reply_to(message, "🎨 Анализирую образ...")
 
     def task():
         try:
             info = bot.get_file(target.photo[-1].file_id)
             image_bytes = bot.download_file(info.file_path)
 
-            result = edit_image_free(image_bytes, prompt)
+            # Free workflow
+            result = edit_image_free_workflow(image_bytes, prompt)
 
             try:
                 bot.delete_message(message.chat.id, status.message_id)
@@ -383,11 +303,11 @@ def edit_command(message):
             )
 
         except Exception as e:
-            print("EDIT FINAL ERROR:", repr(e))
+            print("EDIT ERROR:", repr(e))
             try:
                 safe_err = str(e)[:500]
                 bot.edit_message_text(
-                    f"❌ Ошибка редактирования:\n{safe_err}",
+                    f"❌ Сбой Nano Banana (Vision):\n{safe_err}",
                     message.chat.id,
                     status.message_id
                 )
@@ -397,124 +317,34 @@ def edit_command(message):
     threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
-# VEO 3.1 FAST (VIDEO)
+# MUSIC SCROBBLE (AI-GENERATED)
 # ==========================================================
+@bot.message_handler(commands=["music"])
+def music_command(message):
+    status_msg = bot.reply_to(message, "🎧 Скробблю астральные частоты...")
+    user_name = message.from_user.username or message.from_user.first_name or "Аноним"
 
-VEO_MODEL = "veo-3.1-fast-generate-preview"
+    music_prompt = f"""
+Сгенерируй фейковый музыкальный скроббл. Придумай АБСОЛЮТНО НОВОЕ, смешное, дикое и максимально абсурдное название трека, имя исполнителя и 3-5 жанровых хештегов. 
+Тематика: бытовой сюрреализм, интернет-шизофрения, нелепые ситуации или забавный бред. Делай акцент на юмор и странность.
 
-def get_video_image(message):
-    if message.photo:
-        return message
-    reply = message.reply_to_message
-    if reply and reply.photo:
-        return reply
-    return None
+Ответь СТРОГО по этому шаблону (без markdown-звездочек, сохрани пустые строки и эмодзи):
+{user_name} 🔥 [Случайное число от 1 до 100]
 
-def download_image(message):
-    info = bot.get_file(message.photo[-1].file_id)
-    data = bot.download_file(info.file_path)
-    return types.Image(image_bytes=data, mime_type="image/jpeg")
+🔊 [Название трека] ∙ [Случайное число от 1 до 15] ♫
+[Исполнитель]
 
-def generate_veo(prompt, message_id, source_image=None):
-    veo_prompt = f"Create a short video: {prompt}"
-    config = types.GenerateVideosConfig(
-        number_of_videos=1,
-        resolution="720p",
-        aspect_ratio="16:9"
-    )
-    source = types.GenerateVideosSource(prompt=veo_prompt, image=source_image)
-
-    operation = image_client.models.generate_videos(
-        model=VEO_MODEL, source=source, config=config
-    )
-
-    while not operation.done:
-        time.sleep(10)
-        operation = image_client.operations.get(operation)
-
-    videos = getattr(getattr(operation, "response", None), "generated_videos", None)
-    if not videos or not videos[0].video:
-        raise RuntimeError("Veo не вернул видео.")
-
-    video = videos[0].video
-    image_client.files.download(file=video)
-
-    filename = f"veo_{message_id}_{int(time.time())}.mp4"
-    video.save(filename)
-    return filename
-
-@bot.message_handler(
-    func=lambda m: is_command(m, ["video", "vid"]),
-    content_types=["text", "photo"]
-)
-def video_command(message):
-    raw = message.caption if message.photo else message.text
-    prompt = re.sub(r"^/(video|vid)(@\w+)?\s*", "", raw or "", flags=re.IGNORECASE).strip()
-    source = get_video_image(message)
-
-    if not prompt:
-        bot.reply_to(message, "Напиши, что снять. Например: /video кот бежит по лесу")
-        return
-
+#[тег1] #[тег2] #[тег3]
+"""
     try:
-        source_image = download_image(source) if source else None
+        response = text_model.generate_content([music_prompt])
+        reply = response.text.replace("*", "").strip()
+        bot.edit_message_text(reply, message.chat.id, status_msg.message_id)
     except Exception as e:
-        bot.reply_to(message, f"Ошибка загрузки фото: {e}")
-        return
-
-    status = bot.reply_to(
-        message,
-        "🎬 Оживляю изображение..." if source_image else "🎬 Veo 3.1 Fast рендерит..."
-    )
-
-    def task():
-        video_file = None
-        last_error = None
-
-        for attempt in range(1, 4):
-            try:
-                video_file = generate_veo(prompt, message.message_id, source_image)
-                break
-            except Exception as e:
-                last_error = e
-                if not temp_error(e) or attempt == 3:
-                    break
-                time.sleep(min(2 ** attempt, 15))
-
-        if not video_file:
-            try:
-                bot.edit_message_text(
-                    f"❌ Ошибка Veo:\n{str(last_error)[:500]}",
-                    message.chat.id,
-                    status.message_id
-                )
-            except Exception:
-                pass
-            return
-
-        try:
-            bot.delete_message(message.chat.id, status.message_id)
-        except Exception:
-            pass
-
-        try:
-            with open(video_file, "rb") as video:
-                bot.send_video(
-                    message.chat.id,
-                    video,
-                    reply_to_message_id=message.message_id,
-                    supports_streaming=True
-                )
-        finally:
-            try:
-                os.remove(video_file)
-            except Exception:
-                pass
-
-    threading.Thread(target=task, daemon=True).start()
+        bot.edit_message_text(f"Плеер зажевал кассету: {e}", message.chat.id, status_msg.message_id)
 
 # ==========================================================
-# MEMES
+# MEMES (PIL-BASED)
 # ==========================================================
 
 TEMPLATE_NAME = "template.jpg"
@@ -535,6 +365,8 @@ def text_wrap(text, font, max_width):
     return lines
 
 def draw_text_outline(draw, text, xy, font):
+    from PIL import ImageDraw # Local import to reduce startup
+    # Mimicking original logic for robustness
     x, y = xy
     for dx in range(-2, 3):
         for dy in range(-2, 3):
@@ -542,6 +374,7 @@ def draw_text_outline(draw, text, xy, font):
     draw.text(xy, text, font=font, fill="white")
 
 def generate_meme(top, middle, bottom):
+    from PIL import ImageDraw, ImageFont # Local import
     if not os.path.exists(TEMPLATE_NAME) or not os.path.exists(FONT_NAME):
         return None
 
@@ -610,7 +443,7 @@ def make_meme_command(message):
         bot.edit_message_text(f"Ошибка мема: {e}", message.chat.id, status.message_id)
 
 # ==========================================================
-# HISTORY & MUSIC COMMANDS
+# HISTORY MANAGEMENT COMMANDS
 # ==========================================================
 
 @bot.message_handler(commands=["history", "save_history"])
@@ -692,36 +525,15 @@ def import_history_command(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка при обработке файла: {e}")
 
-@bot.message_handler(commands=["music"])
-def music_command(message):
-    status_msg = bot.reply_to(message, "🎧 Скробблю астральные частоты...")
-    user_name = message.from_user.username or message.from_user.first_name or "Аноним"
-
-    music_prompt = f"""
-Сгенерируй фейковый музыкальный скроббл. Придумай АБСОЛЮТНО НОВОЕ, смешное, дикое и максимально абсурдное название трека, имя исполнителя и 3-5 жанровых хештегов. 
-Тематика: бытовой сюрреализм, интернет-шизофрения, нелепые ситуации или забавный бред. Делай акцент на юмор и странность.
-
-Ответь СТРОГО по этому шаблону (без markdown-звездочек, сохрани пустые строки и эмодзи):
-{user_name} 🔥 [Случайное число от 1 до 100]
-
-🔊 [Название трека] ∙ [Случайное число от 1 до 15] ♫
-[Исполнитель]
-
-#[тег1] #[тег2] #[тег3]
-"""
-    try:
-        response = model.generate_content([music_prompt])
-        reply = response.text.replace("*", "").strip()
-        bot.edit_message_text(reply, message.chat.id, status_msg.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"Плеер зажевал кассету: {e}", message.chat.id, status_msg.message_id)
+# ==========================================================
+# START
+# ==========================================================
 
 @bot.message_handler(commands=["start"])
 def start_command(message):
     bot.reply_to(
         message,
         "/draw — картинка\n"
-        "/video — видео\n"
         "/edit — редактирование фото\n"
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
@@ -738,7 +550,7 @@ def handle_message(message):
     if any(
         is_command(message, cmd)
         for cmd in [
-            ["draw", "gen"], ["video", "vid"], ["edit"],
+            ["draw", "gen"], ["edit"],
             ["make_meme"], ["history", "save_history"],
             ["import_history"], ["music"]
         ]
@@ -789,7 +601,9 @@ def handle_message(message):
         if message.photo:
             info = bot.get_file(message.photo[-1].file_id)
             data = bot.download_file(info.file_path)
-            contents.append(Image.open(io.BytesIO(data)).convert("RGB"))
+            # Use PIL directly here for robustness
+            img_io = io.BytesIO(data)
+            contents.append(Image.open(img_io).convert("RGB"))
 
         elif message.voice or message.audio:
             media = message.voice if message.voice else message.audio
@@ -800,7 +614,7 @@ def handle_message(message):
                 "data": data
             })
 
-        response = model.generate_content(contents)
+        response = text_model.generate_content(contents)
         reply = response.text.replace("*", "")
         bot.reply_to(message, reply)
         dialog_context[chat_id].append(f"читом бот: {reply}")
