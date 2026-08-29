@@ -6,6 +6,7 @@ import base64
 import random
 import json
 import threading
+import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import telebot
@@ -13,7 +14,6 @@ import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
 from PIL import Image, ImageDraw, ImageFont, ImageFile
-from huggingface_hub import InferenceClient
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -23,21 +23,20 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-HF_TOKEN = os.environ.get("HF_TOKEN")
+PIXAZO_API_KEY = os.environ.get("PIXAZO_API_KEY")
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("Не задан TELEGRAM_TOKEN")
 if not GEMINI_API_KEY:
     raise RuntimeError("Не задан GEMINI_API_KEY")
-if not HF_TOKEN:
-    raise RuntimeError("Не задан HF_TOKEN")
+if not PIXAZO_API_KEY:
+    raise RuntimeError("Не задан PIXAZO_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
 genai.configure(api_key=GEMINI_API_KEY)
 image_client = new_genai.Client(api_key=GEMINI_API_KEY)
-hf_client = InferenceClient(api_key=HF_TOKEN, provider="auto")
 
 # ==========================================================
 # PERSISTENT HISTORY (ПАМЯТЬ БОТА)
@@ -138,57 +137,134 @@ def is_command(message, names):
     ))
 
 # ==========================================================
-# DRAW — HUGGING FACE (БЕСПЛАТНЫЕ КРЕДИТЫ)
+# DRAW — PIXAZO FREE API
 # ==========================================================
+# Pixazo сейчас предоставляет бесплатные preview endpoints для
+# Flux Schnell / SDXL и без карты на free tier. Учитываются fair-use
+# лимиты. Здесь используем SDXL Lightning как основной быстрый вариант,
+# затем SDXL Base как fallback.
+#
+# Документация:
+# https://www.pixazo.ai/api/free
 
-# Основная модель для генерации.
-# Hugging Face рекомендует FLUX.1-Krea-dev и Qwen-Image
-# для text-to-image. Используем Qwen-Image как основной вариант.
-DRAW_MODELS = [
-    "Qwen/Qwen-Image",
-    "black-forest-labs/FLUX.1-schnell",
+PIXAZO_BASE = "https://gateway.pixazo.ai"
+
+DRAW_ENDPOINTS = [
+    (
+        f"{PIXAZO_BASE}/sdxl_lightning/getImage/v1/getSDXLImage",
+        "SDXL Lightning"
+    ),
+    (
+        f"{PIXAZO_BASE}/getImage/v1/getSDXLImage",
+        "SDXL Base"
+    ),
 ]
 
 
-def draw_generate(prompt):
+def pixazo_headers():
+    return {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY,
+    }
+
+
+def pixazo_download_result(result):
+    """
+    Pixazo может вернуть output/imageUrl/url.
+    Скачиваем картинку и возвращаем байты.
+    """
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"Неожиданный ответ Pixazo: {result!r}"
+        )
+
+    image_url = (
+        result.get("imageUrl")
+        or result.get("image_url")
+        or result.get("output")
+        or result.get("url")
+    )
+
+    if not image_url:
+        raise RuntimeError(
+            f"Pixazo не вернул URL изображения: {result}"
+        )
+
+    response = requests.get(
+        image_url,
+        timeout=90
+    )
+    response.raise_for_status()
+
+    return response.content
+
+
+def draw_generate_pixazo(prompt):
     last_error = None
 
-    for model_name in DRAW_MODELS:
-        try:
-            print(f"DRAW: Hugging Face -> {model_name}")
+    payload_variants = [
+        {
+            "prompt": prompt,
+            "negativePrompt": (
+                "low quality, blurry, distorted, "
+                "deformed, duplicate objects, watermark"
+            ),
+            "height": 1024,
+            "width": 1024,
+            "num_steps": 20,
+            "guidance": 5,
+            "seed": random.randint(1, 2_147_483_647),
+        },
+        {
+            "prompt": prompt,
+            "negative_prompt": (
+                "low quality, blurry, distorted, "
+                "deformed, duplicate objects, watermark"
+            ),
+            "height": 1024,
+            "width": 1024,
+            "num_steps": 20,
+            "guidance_scale": 5,
+            "seed": random.randint(1, 2_147_483_647),
+        },
+    ]
 
-            image = hf_client.text_to_image(
-                prompt=prompt,
-                model=model_name,
-                width=1024,
-                height=1024,
-            )
+    for endpoint, label in DRAW_ENDPOINTS:
+        for payload in payload_variants:
+            try:
+                print(f"DRAW PIXAZO: {label}")
 
-            if image is None:
-                raise RuntimeError(
-                    f"{model_name} не вернула изображение."
+                response = requests.post(
+                    endpoint,
+                    headers=pixazo_headers(),
+                    json=payload,
+                    timeout=120
                 )
 
-            output = io.BytesIO()
-            image.save(output, format="PNG")
-            output.seek(0)
-            output.name = "generated.png"
+                response.raise_for_status()
+                result = response.json()
 
-            print(f"DRAW OK: {model_name}")
-            return output
+                image_bytes = pixazo_download_result(result)
 
-        except Exception as e:
-            last_error = e
-            print(
-                f"DRAW ERROR {model_name}:",
-                repr(e)
-            )
+                if not image_bytes:
+                    raise RuntimeError(
+                        f"{label} вернула пустое изображение."
+                    )
 
-            # Пробуем следующую модель.
-            continue
+                print(f"DRAW PIXAZO OK: {label}")
+
+                return image_bytes
+
+            except Exception as e:
+                last_error = e
+                print(
+                    f"DRAW PIXAZO ERROR {label}:",
+                    repr(e)
+                )
 
     raise RuntimeError(
-        f"Не удалось создать изображение через Hugging Face: {last_error}"
+        f"Pixazo не смог создать изображение: {last_error}"
     )
 
 
@@ -213,21 +289,20 @@ def draw_command(message):
         )
         return
 
-    enh_prompt = f"""
+    status = bot.reply_to(
+        message,
+        "🎨 Рисую через бесплатный Pixazo..."
+    )
+
+    def task():
+        try:
+            enhanced_prompt = f"""
 Create a high-quality image exactly according to the user's request.
 
-The request may be written in Russian. Understand Russian naturally.
+Understand Russian naturally.
 
-Preserve all requested:
-- objects
-- characters
-- actions
-- composition
-- camera angle
-- lighting
-- atmosphere
-- artistic style
-- visible text
+Preserve the requested objects, characters, actions,
+composition, camera angle, lighting, atmosphere and style.
 
 Do not add unrelated objects.
 
@@ -235,14 +310,9 @@ USER REQUEST:
 {prompt}
 """
 
-    status = bot.reply_to(
-        message,
-        "🎨 Рисую через Hugging Face..."
-    )
-
-    def task():
-        try:
-            result = draw_generate(enh_prompt)
+            image_data = draw_generate_pixazo(
+                enhanced_prompt
+            )
 
             try:
                 bot.delete_message(
@@ -252,11 +322,12 @@ USER REQUEST:
             except Exception:
                 pass
 
-            result.seek(0)
+            file = io.BytesIO(image_data)
+            file.name = "generated.png"
 
             bot.send_photo(
                 message.chat.id,
-                result,
+                file,
                 reply_to_message_id=message.message_id
             )
 
@@ -278,54 +349,146 @@ USER REQUEST:
     ).start()
 
 # ==========================================================
-# EDIT IMAGE — QWEN IMAGE EDIT через HUGGING FACE
+# EDIT IMAGE — PIXAZO FREE SD3.5 IMAGE-TO-IMAGE
 # ==========================================================
 
-EDIT_MODELS = [
-    "Qwen/Qwen-Image-Edit",
-    "black-forest-labs/FLUX.1-Kontext-dev",
-]
+EDIT_ENDPOINT = (
+    "https://gateway.pixazo.ai/sd3-5/v1/r-sd-3-5-large"
+)
 
 
-def edit_image(image_bytes, user_prompt):
-    last_error = None
-
-    # Передаём оригинальные байты непосредственно image-to-image модели.
-    for model_name in EDIT_MODELS:
-        try:
-            print(f"EDIT: Hugging Face -> {model_name}")
-
-            result_image = hf_client.image_to_image(
+def upload_image_to_pixazo(image_bytes):
+    """
+    Pixazo image-to-image требует публичный URL исходного изображения.
+    В этом API прямо передать Telegram bytes нельзя.
+    Поэтому сначала загружаем изображение на временный публичный image host.
+    """
+    # Используем tmpfiles.org для временного публичного URL.
+    # Если сервис недоступен, будет понятная ошибка.
+    response = requests.post(
+        "https://tmpfiles.org/api/v1/upload",
+        files={
+            "file": (
+                "input.jpg",
                 image_bytes,
-                prompt=user_prompt.strip(),
-                model=model_name,
+                "image/jpeg"
             )
-
-            if result_image is None:
-                raise RuntimeError(
-                    f"{model_name} не вернула изображение."
-                )
-
-            output = io.BytesIO()
-            result_image.save(output, format="PNG")
-            output.seek(0)
-            output.name = "edited.png"
-
-            print(f"EDIT OK: {model_name}")
-            return output
-
-        except Exception as e:
-            last_error = e
-            print(
-                f"EDIT ERROR {model_name}:",
-                repr(e)
-            )
-
-            continue
-
-    raise RuntimeError(
-        f"Не удалось отредактировать изображение через Hugging Face: {last_error}"
+        },
+        timeout=60
     )
+    response.raise_for_status()
+
+    data = response.json()
+
+    raw_url = (
+        data.get("data", {})
+        .get("url")
+    )
+
+    if not raw_url:
+        raise RuntimeError(
+            f"Не удалось получить URL временного файла: {data}"
+        )
+
+    # tmpfiles.org возвращает страницу /dl/... для прямого скачивания.
+    public_url = raw_url.replace(
+        "tmpfiles.org/",
+        "tmpfiles.org/dl/"
+    )
+
+    print(
+        "EDIT INPUT URL:",
+        public_url
+    )
+
+    return public_url
+
+
+def edit_image_pixazo(image_bytes, user_prompt):
+    input_url = upload_image_to_pixazo(
+        image_bytes
+    )
+
+    prompt = f"""
+Edit the source image according to this instruction:
+
+{user_prompt}
+
+Preserve the original subject, identity, composition,
+camera angle, lighting and background unless the user
+explicitly asks to change them.
+
+Make only the requested changes.
+Do not redesign the entire image.
+
+USER REQUEST:
+{user_prompt}
+"""
+
+    payload = {
+        "prompt": prompt,
+        "image": input_url,
+        "negative_prompt": (
+            "blurry, low quality, distorted, "
+            "duplicate objects, watermark"
+        ),
+        "aspect_ratio": "1:1",
+        "cfg": 5,
+        "steps": 35,
+        "prompt_strength": 0.65,
+        "output_format": "png",
+        "output_quality": 100,
+    }
+
+    response = requests.post(
+        EDIT_ENDPOINT,
+        headers=pixazo_headers(),
+        json=payload,
+        timeout=180
+    )
+
+    response.raise_for_status()
+
+    result = response.json()
+
+    print(
+        "EDIT PIXAZO RESPONSE:",
+        result
+    )
+
+    output_url = (
+        result.get("output")
+        or result.get("imageUrl")
+        or result.get("image_url")
+        or result.get("url")
+    )
+
+    if not output_url:
+        raise RuntimeError(
+            f"Pixazo не вернул готовое изображение: {result}"
+        )
+
+    image_response = requests.get(
+        output_url,
+        timeout=90
+    )
+    image_response.raise_for_status()
+
+    result_bytes = image_response.content
+
+    if not result_bytes:
+        raise RuntimeError(
+            "Pixazo вернул пустой файл."
+        )
+
+    output = io.BytesIO(
+        result_bytes
+    )
+
+    output.seek(0)
+    output.name = "edited.png"
+
+    return output
 
 
 @bot.message_handler(
@@ -333,7 +496,7 @@ def edit_image(image_bytes, user_prompt):
     content_types=["text", "photo"]
 )
 def edit_command(message):
-    # Фото может быть прикреплено прямо к команде
+    # Фото может быть прикреплено прямо к /edit
     # или находиться в сообщении, на которое сделан reply.
     target = (
         message
@@ -344,7 +507,9 @@ def edit_command(message):
     if not target or not target.photo:
         bot.reply_to(
             message,
-            "Прикрепи фото к /edit или сделай reply на фото."
+            "Прикрепи фото к /edit или сделай reply на фото.\n\n"
+            "Пример:\n"
+            "/edit добавь человеку солнечные очки"
         )
         return
 
@@ -364,57 +529,64 @@ def edit_command(message):
     if not prompt:
         bot.reply_to(
             message,
-            "Напиши, что изменить на фото.\n"
-            "Например: /edit добавь человеку солнцезащитные очки"
+            "Напиши, что изменить на фото."
         )
         return
 
     status = bot.reply_to(
         message,
-        "🎨 Редактирую через Qwen Image Edit..."
+        "🎨 Редактирую через бесплатный Pixazo..."
     )
 
-    try:
-        info = bot.get_file(
-            target.photo[-1].file_id
-        )
-
-        image_bytes = bot.download_file(
-            info.file_path
-        )
-
-        result = edit_image(
-            image_bytes,
-            prompt
-        )
-
+    def task():
         try:
-            bot.delete_message(
-                message.chat.id,
-                status.message_id
+            info = bot.get_file(
+                target.photo[-1].file_id
             )
-        except Exception:
-            pass
 
-        result.seek(0)
-
-        bot.send_photo(
-            message.chat.id,
-            result,
-            reply_to_message_id=message.message_id
-        )
-
-    except Exception as e:
-        print("EDIT FINAL ERROR:", repr(e))
-
-        try:
-            bot.edit_message_text(
-                f"Ошибка редактирования:\n{e}",
-                message.chat.id,
-                status.message_id
+            image_bytes = bot.download_file(
+                info.file_path
             )
-        except Exception:
-            pass
+
+            result = edit_image_pixazo(
+                image_bytes,
+                prompt
+            )
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    status.message_id
+                )
+            except Exception:
+                pass
+
+            result.seek(0)
+
+            bot.send_photo(
+                message.chat.id,
+                result,
+                reply_to_message_id=message.message_id
+            )
+
+            print(
+                "EDIT PIXAZO: PHOTO SENT"
+            )
+
+        except Exception as e:
+            print(
+                "EDIT FINAL ERROR:",
+                repr(e)
+            )
+
+            try:
+                bot.edit_message_text(
+                    f"Ошибка редактирования:\n{e}",
+                    message.chat.id,
+                    status.message_id
+                )
+            except Exception:
+                pass
 
 # ==========================================================
 # VEO 3.1 FAST
