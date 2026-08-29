@@ -6,3 +6,4 @@ pillow
 openai
 google-genai
 huggingface_hub
+requests
