@@ -244,46 +244,96 @@ def draw_command(message):
     threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
-# EDIT IMAGE (БЫСТРОЕ РЕДАКТИРОВАНИЕ ЧЕРЕЗ GEMINI API)
+# EDIT IMAGE (БЕСПЛАТНО: TELEGRAPH + PIXAZO SD 3.5)
 # ==========================================================
 
-def edit_image_gemini(image_bytes, user_prompt):
-    """Редактирование картинки напрямую в памяти через Gemini API (без задержек и зависаний)"""
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+def upload_to_telegraph(image_bytes):
+    """Анонимная загрузка картинки на telegra.ph для получения публичной ссылки"""
+    try:
+        response = requests.post(
+            "https://telegra.ph/upload",
+            files={"file": ("image.jpg", image_bytes, "image/jpeg")},
+            timeout=15
+        )
+        data = response.json()
+        if isinstance(data, list) and "src" in data[0]:
+            return "https://telegra.ph" + data[0]["src"]
+        raise RuntimeError(f"Telegraph error: {data}")
+    except Exception as e:
+        raise RuntimeError(f"Сбой Telegraph: {e}")
 
-    prompt = f"""
-Edit the provided image according to the user's instruction.
-The instruction may be written in Russian. Understand Russian naturally.
-Preserve the main subject, composition, background and camera angle unless asked to change them.
+def edit_image_free(image_bytes, user_prompt):
+    """Редактирование картинки через бесплатные сервисы (Pixazo I2I или Vision-fallback)"""
+    
+    # Попытка 1: Истинное редактирование через Pixazo Image-to-Image
+    try:
+        print("EDIT: Загружаю оригинал на Telegraph...")
+        image_url = upload_to_telegraph(image_bytes)
+        print("EDIT: Telegraph URL =", image_url)
 
-USER REQUEST:
-{user_prompt}
-"""
+        prompt = f"Edit this image exactly according to instruction: {user_prompt}. Preserve original subject, identity, composition and background."
+        
+        payload = {
+            "prompt": prompt,
+            "image": image_url,
+            "negative_prompt": "blurry, low quality, distorted, duplicate objects, watermark",
+            "aspect_ratio": "1:1",
+            "cfg": 5,
+            "steps": 20,
+            "output_format": "jpeg",
+            "output_quality": 90,
+            "prompt_strength": 0.85,
+        }
 
-    models_to_try = ["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image"]
-    last_err = None
+        print("EDIT: Отправляю в Pixazo SD 3.5...")
+        response = requests.post(
+            "https://gateway.pixazo.ai/sd3-5/v1/r-sd-3-5-large",
+            headers=pixazo_headers(),
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        result = response.json()
 
-    for model_name in models_to_try:
-        try:
-            print(f"EDIT GEMINI: пробуем {model_name}")
-            response = image_client.models.generate_content(
-                model=model_name,
-                contents=[prompt, img],
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"]
-                )
-            )
-            data = extract_image_bytes(response)
-            if data:
-                out = io.BytesIO(data)
-                out.name = "edited.png"
-                out.seek(0)
-                return out
-        except Exception as e:
-            last_err = e
-            print(f"EDIT ERROR {model_name}:", repr(e))
+        output_url = (
+            result.get("output") or 
+            result.get("imageUrl") or 
+            result.get("image_url") or 
+            result.get("url")
+        )
+        if isinstance(output_url, dict):
+            output_url = output_url.get("url") or output_url.get("media_url")
 
-    raise RuntimeError(f"Не удалось отредактировать изображение: {last_err}")
+        if not output_url:
+            raise RuntimeError(f"Pixazo не вернул URL результата: {result}")
+
+        img_resp = requests.get(output_url, timeout=30)
+        img_resp.raise_for_status()
+        
+        out = io.BytesIO(img_resp.content)
+        out.name = "edited.jpg"
+        out.seek(0)
+        return out
+
+    except Exception as e:
+        print("EDIT PIXAZO I2I ERROR:", repr(e))
+        print("EDIT: Запускаю резервный план (Gemini Vision + Pixazo Text-to-Image)...")
+        
+        # Попытка 2: Резервный план (Зрение Gemini -> Pixazo Draw)
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        vision_prompt = (
+            f"Describe this image in extreme detail, but apply this transformation: '{user_prompt}'. "
+            "Output ONLY a raw, highly detailed English prompt for a text-to-image AI."
+        )
+        
+        resp = model.generate_content([vision_prompt, img])
+        english_prompt = resp.text.strip()
+        
+        res_bytes = draw_generate_pixazo(english_prompt)
+        out = io.BytesIO(res_bytes)
+        out.name = "edited.png"
+        out.seek(0)
+        return out
 
 
 @bot.message_handler(
@@ -298,7 +348,7 @@ def edit_command(message):
             message,
             "Прикрепи фото к /edit или сделай reply на фото.\n\n"
             "Пример:\n"
-            "/edit добавь человеку солнечные очки"
+            "/edit добавь человеку очки"
         )
         return
 
@@ -311,15 +361,14 @@ def edit_command(message):
         bot.reply_to(message, "Напиши, что изменить на фото.")
         return
 
-    status = bot.reply_to(message, "🎨 Редактирую изображение...")
+    status = bot.reply_to(message, "🎨 Редактирую через бесплатный Pixazo...")
 
     def task():
         try:
             info = bot.get_file(target.photo[-1].file_id)
             image_bytes = bot.download_file(info.file_path)
 
-            # Быстрое редактирование без бесконечного ожидания
-            result = edit_image_gemini(image_bytes, prompt)
+            result = edit_image_free(image_bytes, prompt)
 
             try:
                 bot.delete_message(message.chat.id, status.message_id)
