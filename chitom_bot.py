@@ -6,6 +6,7 @@ import base64
 import random
 import json
 import threading
+import unicodedata
 import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -177,27 +178,35 @@ def load_rym_films():
 rym_films = load_rym_films()
 
 # ==========================================================
-# FILM POSTERS — WIKIPEDIA + LOCAL CACHE
+# FILM POSTERS — DIRECTLY FROM RATEYOURMUSIC + LOCAL CACHE
 # ==========================================================
 
 film_cover_cache_lock = threading.Lock()
 
 
 def load_film_cover_cache():
-    """Локальный кеш title/rank -> URL постера."""
+    """
+    Кеш постеров именно с RYM/Sonemic CDN.
+    """
     try:
         with open(RYM_FILM_COVER_CACHE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+
         if isinstance(data, dict):
             return {
                 str(key): str(value)
                 for key, value in data.items()
-                if isinstance(value, str) and value.startswith("https://")
+                if isinstance(value, str)
+                and (
+                    value.startswith("https://e.snmc.io/")
+                    or value.startswith("https://i.snmc.io/")
+                )
             }
+
     except FileNotFoundError:
         pass
     except Exception as e:
-        print("FILM COVER CACHE LOAD ERROR:", repr(e), flush=True)
+        print("RYM FILM COVER CACHE LOAD ERROR:", repr(e), flush=True)
 
     return {}
 
@@ -206,10 +215,6 @@ film_cover_cache = load_film_cover_cache()
 
 
 def save_film_cover_cache():
-    """
-    Сохраняет только найденные ссылки.
-    Запись атомарная, чтобы параллельные /film не портили JSON.
-    """
     try:
         tmp_path = RYM_FILM_COVER_CACHE_FILE + ".tmp"
 
@@ -228,118 +233,124 @@ def save_film_cover_cache():
         os.replace(tmp_path, RYM_FILM_COVER_CACHE_FILE)
 
     except Exception as e:
-        print("FILM COVER CACHE SAVE ERROR:", repr(e), flush=True)
+        print("RYM FILM COVER CACHE SAVE ERROR:", repr(e), flush=True)
 
 
 def film_cover_cache_key(film):
     return f"{film.get('rank', '')}|{film.get('title', '').strip()}"
 
 
-def normalize_film_title(value):
-    value = str(value or "").casefold()
-    value = re.sub(r"\([^)]*\)", " ", value)
-    value = re.sub(r"[^a-z0-9а-яё]+", " ", value, flags=re.IGNORECASE)
-    return " ".join(value.split())
-
-
-def wikipedia_film_cover(title, language="en"):
+def rym_slug(text):
     """
-    Ищет lead image страницы фильма через официальный Wikipedia API.
-    Это НЕ запрос к RateYourMusic.
+    Строит вероятный slug индивидуальной film-страницы RYM.
+    Сам чарт при этом не запрашивается.
     """
-    api_url = f"https://{language}.wikipedia.org/w/api.php"
+    text = str(text or "").strip()
 
-    # Два запроса повышают шанс найти концертный фильм / мини-сериал
-    # и при этом остаются достаточно быстрыми.
-    queries = [
-        f"{title} film",
-        title,
+    normalized = unicodedata.normalize("NFKD", text)
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    base = ascii_text if ascii_text.strip() else text
+
+    base = base.casefold()
+    base = re.sub(r"[’'`]+", "", base)
+    base = re.sub(r"[^a-z0-9а-яё]+", "-", base, flags=re.IGNORECASE)
+    return base.strip("-")
+
+
+def extract_rym_cover_from_html(html):
+    """
+    Достаёт только ссылку Sonemic CDN из HTML страницы RYM.
+    """
+    if not html:
+        return None
+
+    candidates = []
+
+    meta_patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
     ]
 
-    wanted = normalize_film_title(title)
-
-    for search_text in queries:
-        response = requests.get(
-            api_url,
-            params={
-                "action": "query",
-                "generator": "search",
-                "gsrsearch": search_text,
-                "gsrnamespace": 0,
-                "gsrlimit": 6,
-                "prop": "pageimages",
-                "piprop": "thumbnail|original",
-                "pithumbsize": 900,
-                "format": "json",
-                "formatversion": 2,
-            },
-            headers={
-                "User-Agent": "ChaitomBot/1.0 (Telegram film poster lookup)"
-            },
-            timeout=(4, 7),
-        )
-        response.raise_for_status()
-
-        payload = response.json()
-        pages = payload.get("query", {}).get("pages", [])
-
-        candidates = []
-
-        for page in pages:
-            thumb = (
-                page.get("thumbnail", {}).get("source")
-                or page.get("original", {}).get("source")
+    for pattern in meta_patterns:
+        for value in re.findall(pattern, html, flags=re.IGNORECASE):
+            value = (
+                value.replace("&amp;", "&")
+                .replace("\\/", "/")
+                .strip()
             )
+            if "snmc.io/" in value:
+                candidates.append(value)
 
-            if not isinstance(thumb, str) or not thumb.startswith("https://"):
-                continue
+    for value in re.findall(
+        r'https://(?:e|i)\.snmc\.io/i/[^"\'<>\\\s]+',
+        html,
+        flags=re.IGNORECASE,
+    ):
+        candidates.append(value.replace("\\/", "/").strip())
 
-            page_title = str(page.get("title", ""))
-            page_norm = normalize_film_title(page_title)
+    if not candidates:
+        return None
 
-            score = 0
-            if page_norm == wanted:
-                score += 100
-            if wanted and wanted in page_norm:
-                score += 60
-            if page_norm and page_norm in wanted:
-                score += 30
+    preferred = [
+        url for url in candidates
+        if "/i/" in url and "/300/" in url
+    ]
 
-            lowered = page_title.casefold()
-            if any(
-                word in lowered
-                for word in (
-                    "film",
-                    "movie",
-                    "concert",
-                    "documentary",
-                    "miniseries",
-                    "tv series",
-                )
-            ):
-                score += 15
-
-            candidates.append((score, thumb))
-
-        if candidates:
-            candidates.sort(key=lambda item: item[0], reverse=True)
-            return candidates[0][1]
-
-    return None
+    return (preferred or candidates)[0]
 
 
-def resolve_film_cover(film):
+def fetch_rym_html(url):
     """
-    Порядок:
-    1) cover внутри локального rym_films.json;
-    2) локальный кеш rym_film_covers.json;
-    3) English Wikipedia;
-    4) Russian Wikipedia.
+    Читает только индивидуальную film/search страницу RYM.
+    Эзотерический chart по сети не читается.
+    """
+    response = requests.get(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/152.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        timeout=(5, 12),
+    )
+    response.raise_for_status()
 
-    Страница/чарт RYM здесь вообще не открываются.
+    content_type = response.headers.get("Content-Type", "").lower()
+    if "html" not in content_type:
+        raise RuntimeError(
+            f"RYM page returned non-HTML content: {content_type}"
+        )
+
+    return response.text
+
+
+def discover_rym_film_cover(film):
+    """
+    Получает постер именно с RateYourMusic/Sonemic.
+
+    Порядок:
+    1) cover уже есть в локальном rym_films.json;
+    2) cover уже есть в локальном кеше;
+    3) открывается индивидуальная RYM film page;
+    4) при необходимости — сохранённая RYM search URL.
+
+    Чарт RYM по сети НЕ открывается.
     """
     embedded = str(film.get("cover", "")).strip()
-    if embedded.startswith("https://"):
+
+    if (
+        embedded.startswith("https://e.snmc.io/")
+        or embedded.startswith("https://i.snmc.io/")
+    ):
         return embedded
 
     cache_key = film_cover_cache_key(film)
@@ -354,61 +365,54 @@ def resolve_film_cover(film):
     if not title:
         return None
 
-    for language in ("en", "ru"):
+    candidate_pages = []
+
+    slug = rym_slug(title)
+    if slug:
+        candidate_pages.append(
+            f"https://rateyourmusic.com/film/{slug}/"
+        )
+
+    saved_url = str(film.get("url", "")).strip()
+    if saved_url.startswith("https://rateyourmusic.com/"):
+        candidate_pages.append(saved_url)
+
+    candidate_pages = list(dict.fromkeys(candidate_pages))
+
+    for page_url in candidate_pages:
         try:
-            cover_url = wikipedia_film_cover(
-                title,
-                language=language,
-            )
+            print("RYM FILM POSTER PAGE:", page_url, flush=True)
 
-            if cover_url:
-                with film_cover_cache_lock:
-                    film_cover_cache[cache_key] = cover_url
+            html = fetch_rym_html(page_url)
+            cover_url = extract_rym_cover_from_html(html)
 
-                save_film_cover_cache()
-                return cover_url
+            if not cover_url:
+                continue
+
+            if not (
+                cover_url.startswith("https://e.snmc.io/")
+                or cover_url.startswith("https://i.snmc.io/")
+            ):
+                continue
+
+            with film_cover_cache_lock:
+                film_cover_cache[cache_key] = cover_url
+
+            save_film_cover_cache()
+
+            print("RYM FILM POSTER FOUND:", cover_url, flush=True)
+            return cover_url
 
         except Exception as e:
             print(
-                f"FILM COVER {language.upper()} ERROR:",
+                "RYM FILM POSTER LOOKUP ERROR:",
                 type(e).__name__,
-                str(e)[:250],
+                str(e)[:300],
                 flush=True,
             )
 
     return None
 
-
-def download_film_cover(url):
-    """Скачивает постер для отправки в Telegram."""
-    response = requests.get(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; ChaitomBot/1.0)"
-        },
-        timeout=(4, 10),
-    )
-    response.raise_for_status()
-
-    content_type = response.headers.get("Content-Type", "").lower()
-
-    if "image" not in content_type:
-        raise RuntimeError(
-            f"Источник постера вернул не изображение: {content_type}"
-        )
-
-    if len(response.content) > 10 * 1024 * 1024:
-        raise RuntimeError("Постер слишком большой.")
-
-    return response.content
-
-
-film_health = {
-    "status": "ok" if rym_films else "unavailable",
-    "source": RYM_FILM_CHART_URL,
-    "mode": "local_snapshot",
-    "films": len(rym_films),
-}
 
 # ==========================================================
 # AI MODELS
@@ -553,8 +557,10 @@ def rym_command(message):
 @bot.message_handler(commands=["film"])
 def film_command(message):
     """
-    Выбирает фильм ТОЛЬКО из локального rym_films.json.
-    Постер ищется отдельно через Wikipedia и кешируется локально.
+    Как /rym:
+    - фильм выбирается из локального rym_films.json;
+    - постер берётся только с RYM/Sonemic CDN;
+    - найденный CDN URL кешируется локально.
     """
     if not rym_films:
         bot.reply_to(
@@ -563,77 +569,103 @@ def film_command(message):
         )
         return
 
-    film = random.choice(rym_films)
+    candidates = random.sample(
+        rym_films,
+        min(6, len(rym_films))
+    )
+
+    selected = candidates[0]
+    last_error = None
 
     status = bot.reply_to(
         message,
-        "🎬 Выбираю фильм и ищу постер..."
+        "🎬 Выбираю фильм и беру постер с RYM..."
     )
 
-    def task():
+    def caption_for(film):
         year = f" ({film['year']})" if film.get("year") else ""
 
-        caption = (
+        return (
             f"🎬 RYM film #{film['rank']}\n"
             f"{film['title']}{year}\n\n"
             f"{film['url']}"
         )
 
-        cover_url = None
+    def task():
+        nonlocal last_error
 
-        try:
-            cover_url = resolve_film_cover(film)
-        except Exception as e:
-            print(
-                "FILM COVER RESOLVE ERROR:",
-                repr(e),
-                flush=True,
-            )
-
-        if cover_url:
+        for film in candidates:
             try:
-                cover_bytes = download_film_cover(cover_url)
-                cover = io.BytesIO(cover_bytes)
-                cover.name = "rym_film_poster.jpg"
+                cover_url = discover_rym_film_cover(film)
 
-                bot.send_photo(
-                    message.chat.id,
-                    cover,
-                    caption=caption[:1024],
-                    reply_to_message_id=message.message_id,
-                )
+                if not cover_url:
+                    continue
 
+                caption = caption_for(film)
+
+                # Полностью как /rym: сначала скачиваем CDN сами.
                 try:
-                    bot.delete_message(
-                        message.chat.id,
-                        status.message_id,
+                    cover = io.BytesIO(
+                        download_rym_cover(cover_url)
                     )
-                except Exception:
-                    pass
+                    cover.name = "rym_film_cover.jpg"
 
-                print(
-                    f"FILM OK: #{film['rank']} {film['title']} + poster",
-                    flush=True,
-                )
-                return
+                    bot.send_photo(
+                        message.chat.id,
+                        cover,
+                        caption=caption[:1024],
+                        reply_to_message_id=message.message_id,
+                    )
 
-            except Exception as error:
-                print(
-                    "FILM POSTER DOWNLOAD ERROR:",
-                    type(error).__name__,
-                    str(error)[:250],
-                    flush=True,
-                )
+                    try:
+                        bot.delete_message(
+                            message.chat.id,
+                            status.message_id,
+                        )
+                    except Exception:
+                        pass
 
-                # Если кешированная ссылка протухла — удаляем её.
-                cache_key = film_cover_cache_key(film)
-                with film_cover_cache_lock:
-                    if film_cover_cache.get(cache_key) == cover_url:
-                        film_cover_cache.pop(cache_key, None)
-                save_film_cover_cache()
+                    print(
+                        f"FILM OK: #{film['rank']} "
+                        f"{film['title']} + RYM cover",
+                        flush=True,
+                    )
+                    return
 
-        # Если для очень редкого фильма Wikipedia не нашла постер,
-        # /film всё равно возвращает фильм, а не падает.
+                except Exception as download_error:
+                    last_error = download_error
+                    print(
+                        "RYM FILM COVER DOWNLOAD ERROR:",
+                        repr(download_error),
+                        flush=True,
+                    )
+
+                    # И тот же запасной путь: Telegram качает CDN URL.
+                    try:
+                        bot.send_photo(
+                            message.chat.id,
+                            cover_url,
+                            caption=caption[:1024],
+                            reply_to_message_id=message.message_id,
+                        )
+
+                        try:
+                            bot.delete_message(
+                                message.chat.id,
+                                status.message_id,
+                            )
+                        except Exception:
+                            pass
+
+                        return
+
+                    except Exception as telegram_error:
+                        last_error = telegram_error
+
+            except Exception as e:
+                last_error = e
+                print("RYM FILM ERROR:", repr(e), flush=True)
+
         try:
             bot.delete_message(
                 message.chat.id,
@@ -642,11 +674,16 @@ def film_command(message):
         except Exception:
             pass
 
-        bot.reply_to(message, caption)
+        if last_error:
+            print(
+                "RYM FILM FINAL COVER ERROR:",
+                repr(last_error),
+                flush=True,
+            )
 
-        print(
-            f"FILM OK: #{film['rank']} {film['title']} (poster not found)",
-            flush=True,
+        bot.reply_to(
+            message,
+            caption_for(selected)
         )
 
     threading.Thread(
