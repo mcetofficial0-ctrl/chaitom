@@ -692,6 +692,181 @@ def film_command(message):
     ).start()
 
 
+
+# ==========================================================
+# RANDOM WIKIPEDIA IMAGE
+# ==========================================================
+
+WIKIPEDIA_API_URL = "https://ru.wikipedia.org/w/api.php"
+
+
+def get_random_wikipedia_image():
+    """
+    Берёт случайную статью из русской Википедии и пытается получить
+    её основное изображение. Никакого локального списка нет.
+
+    Если статья без картинки — пробует следующую.
+    """
+    headers = {
+        "User-Agent": "ChaitomBot/1.0 (Telegram random Wikipedia image)"
+    }
+
+    last_error = None
+
+    for attempt in range(12):
+        try:
+            response = requests.get(
+                WIKIPEDIA_API_URL,
+                params={
+                    "action": "query",
+                    "generator": "random",
+                    "grnnamespace": 0,
+                    "grnlimit": 1,
+                    "prop": "pageimages|info",
+                    "piprop": "original|thumbnail",
+                    "pithumbsize": 1280,
+                    "inprop": "url",
+                    "redirects": 1,
+                    "format": "json",
+                    "formatversion": 2,
+                },
+                headers=headers,
+                timeout=(4, 10),
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            pages = data.get("query", {}).get("pages", [])
+
+            if not pages:
+                continue
+
+            page = pages[0]
+
+            title = str(page.get("title", "")).strip()
+            article_url = str(page.get("fullurl", "")).strip()
+
+            image_url = (
+                page.get("original", {}).get("source")
+                or page.get("thumbnail", {}).get("source")
+            )
+
+            if not image_url or not image_url.startswith("https://"):
+                continue
+
+            # Telegram send_photo не умеет SVG.
+            lower_url = image_url.lower()
+            if lower_url.endswith(".svg") or ".svg?" in lower_url:
+                continue
+
+            # Скачиваем сами, чтобы сразу проверить, что это реальное изображение.
+            image_response = requests.get(
+                image_url,
+                headers=headers,
+                timeout=(4, 12),
+            )
+            image_response.raise_for_status()
+
+            content_type = image_response.headers.get(
+                "Content-Type",
+                ""
+            ).lower()
+
+            if "image" not in content_type:
+                continue
+
+            image_bytes = image_response.content
+
+            if not image_bytes:
+                continue
+
+            if len(image_bytes) > 10 * 1024 * 1024:
+                continue
+
+            return {
+                "title": title or "Wikipedia",
+                "article_url": article_url,
+                "image_url": image_url,
+                "image_bytes": image_bytes,
+            }
+
+        except Exception as e:
+            last_error = e
+            print(
+                f"RAND_WIKI attempt {attempt + 1}/12 ERROR:",
+                repr(e),
+                flush=True,
+            )
+
+    raise RuntimeError(
+        f"Не удалось найти случайную картинку в Wikipedia. "
+        f"Последняя ошибка: {last_error}"
+    )
+
+
+@bot.message_handler(commands=["rand_wiki"])
+def rand_wiki_command(message):
+    status = bot.reply_to(
+        message,
+        "🌐 Ищу случайную картинку в Википедии..."
+    )
+
+    def task():
+        try:
+            item = get_random_wikipedia_image()
+
+            caption = (
+                f"🌐 {item['title']}\n"
+                f"{item['article_url']}"
+            ).strip()
+
+            photo = io.BytesIO(item["image_bytes"])
+            photo.name = "wikipedia_random.jpg"
+
+            bot.send_photo(
+                message.chat.id,
+                photo,
+                caption=caption[:1024],
+                reply_to_message_id=message.message_id,
+            )
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    status.message_id,
+                )
+            except Exception:
+                pass
+
+            print(
+                "RAND_WIKI OK:",
+                item["title"],
+                flush=True,
+            )
+
+        except Exception as e:
+            print(
+                "RAND_WIKI ERROR:",
+                repr(e),
+                flush=True,
+            )
+
+            try:
+                bot.edit_message_text(
+                    f"❌ Не удалось получить картинку из Википедии:\n"
+                    f"{str(e)[:600]}",
+                    message.chat.id,
+                    status.message_id,
+                )
+            except Exception:
+                pass
+
+    threading.Thread(
+        target=task,
+        daemon=True,
+    ).start()
+
+
 # ==========================================================
 # DRAW — FREE API (HUGGING FACE / FALLBACK)
 # ==========================================================
