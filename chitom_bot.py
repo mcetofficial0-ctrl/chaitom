@@ -250,7 +250,7 @@ def rym_command(message):
 
 @bot.message_handler(commands=["film"])
 def film_command(message):
-    status = bot.reply_to(message, "🎬 Выбираю фильм из чарта RYM...")
+    status = bot.reply_to(message, "🎬 Выбираю фильм из локального снимка RYM...")
 
     def task():
         try:
