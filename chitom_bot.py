@@ -25,7 +25,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5.6-luna")
+OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "chat-latest")
 OPENAI_TRANSCRIBE_MODEL = os.environ.get(
     "OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"
 )
