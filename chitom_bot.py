@@ -7,9 +7,7 @@ import random
 import json
 import threading
 import requests
-from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urljoin
 
 import telebot
 import google.generativeai as genai
@@ -17,6 +15,7 @@ from google import genai as new_genai
 from google.genai import types
 from openai import OpenAI
 from free_chat import GroqChat, ChatUnavailable
+from rym_film_chart import FilmChart, ChartUnavailable, CHART_URL as RYM_FILM_CHART_URL
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -57,19 +56,9 @@ chat_client = (
 HISTORY_FILE = "chat_history.json"
 HISTORY_LIMIT = 1000
 RYM_ALBUMS_FILE = os.path.join(os.path.dirname(__file__), "rym_albums.json")
-RYM_FILMS_FILE = os.path.join(os.path.dirname(__file__), "rym_films.json")
 RYM_CHART_URL = (
     "https://rateyourmusic.com/charts/esoteric/album/all-time/"
     "g:%2dclassical%2dmusic/separate:live,archival,soundtrack/"
-)
-RYM_FILM_CHART_URL = (
-    "https://rateyourmusic.com/charts/esoteric/film/all-time/"
-    "separate:live,archival,soundtrack/"
-)
-RYM_FILM_CHART_PROXY_URL = os.environ.get(
-    "RYM_FILM_CHART_PROXY_URL",
-    "https://r.jina.ai/http://rateyourmusic.com/charts/esoteric/film/all-time/"
-    "separate:live,archival,soundtrack/",
 )
 
 def load_chat_history():
@@ -117,110 +106,7 @@ def load_rym_albums():
 
 rym_albums = load_rym_albums()
 
-def load_rym_films():
-    """Загружает фильмы из чарта RYM с резервом на локальный снимок."""
-    local_films = []
-    try:
-        with open(RYM_FILMS_FILE, "r", encoding="utf-8") as f:
-            films = json.load(f)
-        local_films = [
-            film for film in films
-            if isinstance(film, dict)
-            and film.get("title")
-            and film.get("url", "").startswith("https://rateyourmusic.com/release/film/")
-        ]
-    except (OSError, ValueError) as e:
-        print("Ошибка загрузки каталога фильмов RYM:", e)
-
-    sources = (
-        (RYM_FILM_CHART_URL, "RYM"),
-        (RYM_FILM_CHART_PROXY_URL, "proxy"),
-    )
-    for source_url, source_name in sources:
-        if not source_url:
-            continue
-        try:
-            response = requests.get(
-                source_url,
-                headers={
-                    "Accept": "text/html, text/plain;q=0.9",
-                    "User-Agent": "Mozilla/5.0 (compatible; chaitom_bot/1.0)",
-                },
-                timeout=10,
-            )
-            response.raise_for_status()
-            chart_films = parse_rym_film_chart(response.text)
-            if not chart_films:
-                continue
-            metadata = {film["url"]: film for film in local_films}
-            for film in chart_films:
-                film.update({
-                    key: value
-                    for key, value in metadata.get(film["url"], {}).items()
-                    if key not in film
-                })
-            print(f"Загружено {len(chart_films)} фильмов из чарта RYM ({source_name}).")
-            return chart_films
-        except requests.RequestException:
-            continue
-
-    print(f"Загружено {len(local_films)} фильмов из локального каталога RYM.")
-    return local_films
-
-
-class _RYMFilmChartParser(HTMLParser):
-    """Извлекает ссылки на фильмы, не строя slug по названию."""
-
-    def __init__(self):
-        super().__init__()
-        self.films = []
-        self._href = None
-        self._text = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag != "a":
-            return
-        href = dict(attrs).get("href", "")
-        if "/release/film/" in href:
-            self._href = urljoin("https://rateyourmusic.com", href)
-            self._text = []
-
-    def handle_data(self, data):
-        if self._href is not None:
-            self._text.append(data)
-
-    def handle_endtag(self, tag):
-        if tag != "a" or self._href is None:
-            return
-        title = " ".join("".join(self._text).split())
-        if title and self._href not in {film["url"] for film in self.films}:
-            self.films.append({
-                "rank": len(self.films) + 1,
-                "title": title,
-                "url": self._href,
-            })
-        self._href = None
-        self._text = []
-
-
-def parse_rym_film_chart(html):
-    parser = _RYMFilmChartParser()
-    parser.feed(html)
-    known_urls = {film["url"] for film in parser.films}
-    for title, url in re.findall(
-        r"\[([^\]]+)\]\((https://rateyourmusic\.com/release/film/[^)\s]+)\)",
-        html,
-    ):
-        if url not in known_urls:
-            parser.films.append({
-                "rank": len(parser.films) + 1,
-                "title": " ".join(title.split()),
-                "url": urljoin("https://rateyourmusic.com", url),
-            })
-            known_urls.add(url)
-    return parser.films
-
-rym_films = load_rym_films()
+film_chart = FilmChart()
 
 # ==========================================================
 # AI MODELS
@@ -364,59 +250,49 @@ def rym_command(message):
 
 @bot.message_handler(commands=["film"])
 def film_command(message):
-    if not rym_films:
-        bot.reply_to(message, f"Каталог фильмов RYM пока не загрузился. Сам чарт: {RYM_FILM_CHART_URL}")
-        return
+    status = bot.reply_to(message, "🎬 Выбираю фильм из чарта RYM...")
 
-    candidates = random.sample(rym_films, min(6, len(rym_films)))
-    selected = candidates[0]
-    last_error = None
-
-    for film in candidates:
-        if not film.get("cover"):
-            continue
-
-        year = f" ({film['year']})" if film.get("year") else ""
-        caption = (
-            f"🎬 RYM film #{film.get('rank', '?')}\n"
-            f"{film['title']}{year}\n"
-            f"Режиссёр: {film.get('director', 'Unknown Director')}\n\n"
-            f"{film['url']}"
-        )
-
+    def task():
         try:
-            cover = io.BytesIO(download_rym_cover(film["cover"]))
-            cover.name = "rym_film.jpg"
-            bot.send_photo(
-                message.chat.id,
-                cover,
-                caption=caption,
-                reply_to_message_id=message.message_id,
+            film = film_chart.pick()
+            year = f" ({film['year']})" if film.get("year") else ""
+            caption = (
+                f"🎬 RYM film #{film['rank']}\n"
+                f"{film['title']}{year}\n\n{film['url']}"
             )
-            return
-        except Exception as e:
-            last_error = e
-            print("RYM FILM COVER ERROR:", repr(e))
-
+            if film.get("cover"):
+                try:
+                    cover = io.BytesIO(download_rym_cover(film["cover"]))
+                    cover.name = "rym_film.jpg"
+                    bot.send_photo(
+                        message.chat.id, cover, caption=caption[:1024],
+                        reply_to_message_id=message.message_id,
+                    )
+                    try:
+                        bot.delete_message(message.chat.id, status.message_id)
+                    except Exception:
+                        pass
+                    return
+                except Exception as error:
+                    print("RYM FILM POSTER:", type(error).__name__, flush=True)
+            # Preserve the selected film even if its poster cannot be loaded.
+            bot.edit_message_text(caption, message.chat.id, status.message_id)
+        except ChartUnavailable as error:
+            bot.edit_message_text(
+                f"{error}\nСам чарт: {RYM_FILM_CHART_URL}",
+                message.chat.id, status.message_id,
+            )
+        except Exception as error:
+            print("RYM FILM ERROR:", type(error).__name__, flush=True)
             try:
-                bot.send_photo(
-                    message.chat.id,
-                    film["cover"],
-                    caption=caption,
-                    reply_to_message_id=message.message_id,
+                bot.edit_message_text(
+                    "Не удалось отправить фильм. Попробуй ещё раз.",
+                    message.chat.id, status.message_id,
                 )
-                return
-            except Exception as telegram_error:
-                last_error = telegram_error
-                print("RYM TELEGRAM FILM COVER ERROR:", repr(telegram_error))
+            except Exception:
+                pass
 
-    fallback = (
-        f"🎬 RYM film #{selected.get('rank', '?')}\n"
-        f"{selected['title']}\n\n{selected['url']}"
-    )
-    if last_error:
-        print("RYM FILM FINAL ERROR:", repr(last_error))
-    bot.reply_to(message, fallback)
+    threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
 # DRAW — FREE API (HUGGING FACE / FALLBACK)
@@ -1048,6 +924,12 @@ def handle_message(message):
 
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/health/film":
+            self.send_response(200 if film_chart.health["status"] == "ok" else 503)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(film_chart.health).encode("utf-8"))
+            return
         if self.path == "/health/chat":
             # Reports the last check; never triggers a paid/free API request.
             self.send_response(200 if conversation.health["status"] == "ok" else 503)
@@ -1081,4 +963,5 @@ if __name__ == "__main__":
     print(f"Загружено {len(chat_history)} фраз в память")
     # One synthetic request per startup verifies the deployed key and model.
     threading.Thread(target=conversation.startup_check, daemon=True).start()
+    threading.Thread(target=film_chart.check, daemon=True).start()
     bot.infinity_polling()
