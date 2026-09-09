@@ -303,14 +303,7 @@ def draw_command(message):
         image_data = None
         last_error = None
 
-        try:
-             if model is None:
-                 raise RuntimeError("GEMINI_API_KEY не задан")
-             translation_prompt = f"Translate the following Russian text to a detailed, highly aesthetic English image generation prompt: '{prompt}'. Reply ONLY with the English prompt."
-             translation_response = model.generate_content([translation_prompt])
-             english_prompt = translation_response.text.strip()
-        except Exception:
-             english_prompt = prompt
+        english_prompt = prompt
 
         try:
             image_data = draw_generate_hf(english_prompt)
@@ -404,48 +397,28 @@ def edit_command(message):
             edited_image_data = None
             last_error = None
 
-            try:
-                 if model is None:
-                     raise RuntimeError("GEMINI_API_KEY не задан")
-                 translation_prompt = f"Translate the following Russian image editing instruction to a detailed English prompt: '{prompt}'. Reply ONLY with the English prompt."
-                 translation_response = model.generate_content([translation_prompt])
-                 english_prompt = translation_response.text.strip()
-            except Exception:
-                 english_prompt = prompt
+            english_prompt = prompt
 
             try:
                 edited_image_data = edit_image_hf(image_bytes, english_prompt)
                 print("EDIT OK: Hugging Face (InstructPix2Pix)")
             except Exception as e:
                 print("EDIT HF I2I ERROR:", repr(e))
-                print("EDIT: Запускаю резервный план (Vision -> Generation)...")
+                print("EDIT: Запускаю бесплатный резервный план без Gemini...")
                 try:
-                    if model is None:
-                        raise RuntimeError("Для резервного редактирования нужен GEMINI_API_KEY")
-                    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                    vision_analysis_prompt = (
-                        "Analyze this image in extreme detail. Provide a comprehensive, highly detailed English description of every element, "
-                        "including the subject, setting, lighting, composition, colors, and style."
+                    fallback_prompt = (
+                        "Create an image matching this requested transformation as closely as possible: "
+                        f"{english_prompt}. Keep the result photorealistic and high quality."
                     )
-                    analysis_response = model.generate_content([vision_analysis_prompt, img])
-                    original_description = analysis_response.text.strip()
-
-                    prompt_engineering_instructions = (
-                        f"Based on the following detailed description of an original image:\n\n{original_description}\n\n"
-                        f"Create a NEW, extremely detailed English image generation prompt that depicts the exact same scene, "
-                        f"but with the following transformation applied: '{english_prompt}'. "
-                        "Maintain the original composition, style, and identity as much as possible."
-                    )
-                    prompt_response = model.generate_content([prompt_engineering_instructions])
-                    final_english_prompt = prompt_response.text.strip()
-
-                    print("EDIT: Generating new image via free prompt...")
-                    edited_image_data = draw_generate_pollinations(final_english_prompt)
-                    print("EDIT OK: Vision -> Generation Fallback")
+                    edited_image_data = draw_generate_pollinations(fallback_prompt)
+                    print("EDIT OK: Pollinations prompt fallback")
 
                 except Exception as e_regen:
                     last_error = e_regen
                     print("EDIT FINAL FALLBACK ERROR:", repr(e_regen))
+
+                if not edited_image_data:
+                    last_error = e
 
             if edited_image_data:
                 try:
