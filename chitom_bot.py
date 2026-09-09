@@ -66,6 +66,11 @@ RYM_FILM_CHART_URL = (
     "https://rateyourmusic.com/charts/esoteric/film/all-time/"
     "separate:live,archival,soundtrack/"
 )
+RYM_FILM_CHART_PROXY_URL = os.environ.get(
+    "RYM_FILM_CHART_PROXY_URL",
+    "https://r.jina.ai/http://rateyourmusic.com/charts/esoteric/film/all-time/"
+    "separate:live,archival,soundtrack/",
+)
 
 def load_chat_history():
     """Загружает историю из файла при старте скрипта"""
@@ -113,7 +118,7 @@ def load_rym_albums():
 rym_albums = load_rym_albums()
 
 def load_rym_films():
-    """Загружает фильмы непосредственно из указанного чарта RYM."""
+    """Загружает фильмы из чарта RYM с резервом на локальный снимок."""
     local_films = []
     try:
         with open(RYM_FILMS_FILE, "r", encoding="utf-8") as f:
@@ -127,15 +132,26 @@ def load_rym_films():
     except (OSError, ValueError) as e:
         print("Ошибка загрузки каталога фильмов RYM:", e)
 
-    try:
-        response = requests.get(
-            RYM_FILM_CHART_URL,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; chaitom_bot/1.0)"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        chart_films = parse_rym_film_chart(response.text)
-        if chart_films:
+    sources = (
+        (RYM_FILM_CHART_URL, "RYM"),
+        (RYM_FILM_CHART_PROXY_URL, "proxy"),
+    )
+    for source_url, source_name in sources:
+        if not source_url:
+            continue
+        try:
+            response = requests.get(
+                source_url,
+                headers={
+                    "Accept": "text/html, text/plain;q=0.9",
+                    "User-Agent": "Mozilla/5.0 (compatible; chaitom_bot/1.0)",
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            chart_films = parse_rym_film_chart(response.text)
+            if not chart_films:
+                continue
             metadata = {film["url"]: film for film in local_films}
             for film in chart_films:
                 film.update({
@@ -143,11 +159,10 @@ def load_rym_films():
                     for key, value in metadata.get(film["url"], {}).items()
                     if key not in film
                 })
-            print(f"Загружено {len(chart_films)} фильмов из чарта RYM.")
+            print(f"Загружено {len(chart_films)} фильмов из чарта RYM ({source_name}).")
             return chart_films
-        print("В ответе RYM не найдено фильмов, использую локальный каталог.")
-    except requests.RequestException as e:
-        print("Ошибка загрузки чарта фильмов RYM:", e)
+        except requests.RequestException:
+            continue
 
     print(f"Загружено {len(local_films)} фильмов из локального каталога RYM.")
     return local_films
@@ -191,6 +206,18 @@ class _RYMFilmChartParser(HTMLParser):
 def parse_rym_film_chart(html):
     parser = _RYMFilmChartParser()
     parser.feed(html)
+    known_urls = {film["url"] for film in parser.films}
+    for title, url in re.findall(
+        r"\[([^\]]+)\]\((https://rateyourmusic\.com/release/film/[^)\s]+)\)",
+        html,
+    ):
+        if url not in known_urls:
+            parser.films.append({
+                "rank": len(parser.films) + 1,
+                "title": " ".join(title.split()),
+                "url": urljoin("https://rateyourmusic.com", url),
+            })
+            known_urls.add(url)
     return parser.films
 
 rym_films = load_rym_films()
