@@ -55,9 +55,14 @@ chat_client = (
 HISTORY_FILE = "chat_history.json"
 HISTORY_LIMIT = 1000
 RYM_ALBUMS_FILE = os.path.join(os.path.dirname(__file__), "rym_albums.json")
+RYM_FILMS_FILE = os.path.join(os.path.dirname(__file__), "rym_films.json")
 RYM_CHART_URL = (
     "https://rateyourmusic.com/charts/esoteric/album/all-time/"
     "g:%2dclassical%2dmusic/separate:live,archival,soundtrack/"
+)
+RYM_FILM_CHART_URL = (
+    "https://rateyourmusic.com/charts/esoteric/film/all-time/"
+    "separate:live,archival,soundtrack/"
 )
 
 def load_chat_history():
@@ -104,6 +109,25 @@ def load_rym_albums():
         return []
 
 rym_albums = load_rym_albums()
+
+def load_rym_films():
+    """Загружает локальный снимок эзотерического чарта фильмов RYM."""
+    try:
+        with open(RYM_FILMS_FILE, "r", encoding="utf-8") as f:
+            films = json.load(f)
+        valid_films = [
+            film for film in films
+            if isinstance(film, dict)
+            and film.get("title")
+            and film.get("url", "").startswith("https://rateyourmusic.com/release/film/")
+        ]
+        print(f"Загружено {len(valid_films)} фильмов из чарта RYM.")
+        return valid_films
+    except Exception as e:
+        print("Ошибка загрузки каталога фильмов RYM:", e)
+        return []
+
+rym_films = load_rym_films()
 
 # ==========================================================
 # AI MODELS
@@ -243,6 +267,62 @@ def rym_command(message):
     )
     if last_error:
         print("RYM FINAL ERROR:", repr(last_error))
+    bot.reply_to(message, fallback)
+
+@bot.message_handler(commands=["film"])
+def film_command(message):
+    if not rym_films:
+        bot.reply_to(message, f"Каталог фильмов RYM пока не загрузился. Сам чарт: {RYM_FILM_CHART_URL}")
+        return
+
+    candidates = random.sample(rym_films, min(6, len(rym_films)))
+    selected = candidates[0]
+    last_error = None
+
+    for film in candidates:
+        if not film.get("cover"):
+            continue
+
+        year = f" ({film['year']})" if film.get("year") else ""
+        caption = (
+            f"🎬 RYM film #{film.get('rank', '?')}\n"
+            f"{film['title']}{year}\n"
+            f"Режиссёр: {film.get('director', 'Unknown Director')}\n\n"
+            f"{film['url']}"
+        )
+
+        try:
+            cover = io.BytesIO(download_rym_cover(film["cover"]))
+            cover.name = "rym_film.jpg"
+            bot.send_photo(
+                message.chat.id,
+                cover,
+                caption=caption,
+                reply_to_message_id=message.message_id,
+            )
+            return
+        except Exception as e:
+            last_error = e
+            print("RYM FILM COVER ERROR:", repr(e))
+
+            try:
+                bot.send_photo(
+                    message.chat.id,
+                    film["cover"],
+                    caption=caption,
+                    reply_to_message_id=message.message_id,
+                )
+                return
+            except Exception as telegram_error:
+                last_error = telegram_error
+                print("RYM TELEGRAM FILM COVER ERROR:", repr(telegram_error))
+
+    fallback = (
+        f"🎬 RYM film #{selected.get('rank', '?')}\n"
+        f"{selected['title']}\n\n{selected['url']}"
+    )
+    if last_error:
+        print("RYM FILM FINAL ERROR:", repr(last_error))
     bot.reply_to(message, fallback)
 
 # ==========================================================
@@ -784,6 +864,7 @@ def start_command(message):
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
         "/rym — случайный альбом из эзотерического топа RYM\n"
+        "/film — случайный фильм из эзотерического топа RYM\n"
         "/history — статус памяти фраз\n"
         "/import_history — загрузить текстовый файл с фразами"
     )
@@ -799,7 +880,7 @@ def handle_message(message):
         for cmd in [
             ["draw", "gen"], ["edit"], ["video", "vid"],
             ["make_meme"], ["history", "save_history"],
-            ["import_history"], ["music"], ["rym"]
+            ["import_history"], ["music"], ["rym"], ["film"]
         ]
     ):
         return
