@@ -1,0 +1,1257 @@
+{
+  "chart_url": "https://rateyourmusic.com/charts/esoteric/film/all-time/separate:live,archival,soundtrack/",
+  "snapshot_date": "2024-06-05",
+  "snapshot_note": "Bundled local snapshot of the RYM esoteric film chart. The deployed bot never fetches the protected RYM chart at runtime. Ranks/titles were cross-checked against a public mirror of the RYM esoteric chart updated 2024-06-05. Individual links use RYM film search to avoid broken guessed slugs.",
+  "films": [
+    {
+      "rank": 1,
+      "title": "Portishead: Roseland New York",
+      "url": "https://rateyourmusic.com/search?searchterm=Portishead%3A+Roseland+New+York&searchtype=F"
+    },
+    {
+      "rank": 2,
+      "title": "Heimat",
+      "url": "https://rateyourmusic.com/search?searchterm=Heimat&searchtype=F"
+    },
+    {
+      "rank": 3,
+      "title": "Stewart Lee: If You Prefer a Milder Comedian, Please Ask for One",
+      "url": "https://rateyourmusic.com/search?searchterm=Stewart+Lee%3A+If+You+Prefer+a+Milder+Comedian%2C+Please+Ask+for+One&searchtype=F"
+    },
+    {
+      "rank": 4,
+      "title": "Never Get Tired: The Bomb the Music Industry! Story",
+      "url": "https://rateyourmusic.com/search?searchterm=Never+Get+Tired%3A+The+Bomb+the+Music+Industry%21+Story&searchtype=F"
+    },
+    {
+      "rank": 5,
+      "title": "Heimat 2: A Chronicle of a Generation",
+      "url": "https://rateyourmusic.com/search?searchterm=Heimat+2%3A+A+Chronicle+of+a+Generation&searchtype=F"
+    },
+    {
+      "rank": 6,
+      "title": "Eight Deadly Shots",
+      "url": "https://rateyourmusic.com/search?searchterm=Eight+Deadly+Shots&searchtype=F"
+    },
+    {
+      "rank": 7,
+      "title": "Depeche Mode: Devotional",
+      "url": "https://rateyourmusic.com/search?searchterm=Depeche+Mode%3A+Devotional&searchtype=F"
+    },
+    {
+      "rank": 8,
+      "title": "The Phantom of the Opera at the Royal Albert Hall",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Phantom+of+the+Opera+at+the+Royal+Albert+Hall&searchtype=F"
+    },
+    {
+      "rank": 9,
+      "title": "Stewart Lee: Carpet Remnant World",
+      "url": "https://rateyourmusic.com/search?searchterm=Stewart+Lee%3A+Carpet+Remnant+World&searchtype=F"
+    },
+    {
+      "rank": 10,
+      "title": "Local Legends",
+      "url": "https://rateyourmusic.com/search?searchterm=Local+Legends&searchtype=F"
+    },
+    {
+      "rank": 11,
+      "title": "Dead Souls",
+      "url": "https://rateyourmusic.com/search?searchterm=Dead+Souls&searchtype=F"
+    },
+    {
+      "rank": 12,
+      "title": "Laughter and Grief by the White Sea",
+      "url": "https://rateyourmusic.com/search?searchterm=Laughter+and+Grief+by+the+White+Sea&searchtype=F"
+    },
+    {
+      "rank": 13,
+      "title": "When the Levees Broke: A Requiem in Four Acts",
+      "url": "https://rateyourmusic.com/search?searchterm=When+the+Levees+Broke%3A+A+Requiem+in+Four+Acts&searchtype=F"
+    },
+    {
+      "rank": 14,
+      "title": "Gammelion",
+      "url": "https://rateyourmusic.com/search?searchterm=Gammelion&searchtype=F"
+    },
+    {
+      "rank": 15,
+      "title": "Route One/USA",
+      "url": "https://rateyourmusic.com/search?searchterm=Route+One%2FUSA&searchtype=F"
+    },
+    {
+      "rank": 16,
+      "title": "Cows & Cows & Cows",
+      "url": "https://rateyourmusic.com/search?searchterm=Cows+%26+Cows+%26+Cows&searchtype=F"
+    },
+    {
+      "rank": 17,
+      "title": "Gintama: The Very Final",
+      "url": "https://rateyourmusic.com/search?searchterm=Gintama%3A+The+Very+Final&searchtype=F"
+    },
+    {
+      "rank": 18,
+      "title": "Death in the Land of Encantos",
+      "url": "https://rateyourmusic.com/search?searchterm=Death+in+the+Land+of+Encantos&searchtype=F"
+    },
+    {
+      "rank": 19,
+      "title": "Southern Comfort",
+      "url": "https://rateyourmusic.com/search?searchterm=Southern+Comfort&searchtype=F"
+    },
+    {
+      "rank": 20,
+      "title": "Hours for Jerome",
+      "url": "https://rateyourmusic.com/search?searchterm=Hours+for+Jerome&searchtype=F"
+    },
+    {
+      "rank": 21,
+      "title": "The Cure: Trilogy",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Cure%3A+Trilogy&searchtype=F"
+    },
+    {
+      "rank": 22,
+      "title": "Distant Sky",
+      "url": "https://rateyourmusic.com/search?searchterm=Distant+Sky&searchtype=F"
+    },
+    {
+      "rank": 23,
+      "title": "A Personal Journey with Martin Scorsese Through American Movies",
+      "url": "https://rateyourmusic.com/search?searchterm=A+Personal+Journey+with+Martin+Scorsese+Through+American+Movies&searchtype=F"
+    },
+    {
+      "rank": 24,
+      "title": "Perfect Lives",
+      "url": "https://rateyourmusic.com/search?searchterm=Perfect+Lives&searchtype=F"
+    },
+    {
+      "rank": 25,
+      "title": "Movie Dementia",
+      "url": "https://rateyourmusic.com/search?searchterm=Movie+Dementia&searchtype=F"
+    },
+    {
+      "rank": 26,
+      "title": "Depeche Mode: One Night in Paris",
+      "url": "https://rateyourmusic.com/search?searchterm=Depeche+Mode%3A+One+Night+in+Paris&searchtype=F"
+    },
+    {
+      "rank": 27,
+      "title": "Anna",
+      "url": "https://rateyourmusic.com/search?searchterm=Anna&searchtype=F"
+    },
+    {
+      "rank": 28,
+      "title": "The T.A.M.I. Show",
+      "url": "https://rateyourmusic.com/search?searchterm=The+T.A.M.I.+Show&searchtype=F"
+    },
+    {
+      "rank": 29,
+      "title": "Twenty Hours",
+      "url": "https://rateyourmusic.com/search?searchterm=Twenty+Hours&searchtype=F"
+    },
+    {
+      "rank": 30,
+      "title": "Magino Village: A Tale",
+      "url": "https://rateyourmusic.com/search?searchterm=Magino+Village%3A+A+Tale&searchtype=F"
+    },
+    {
+      "rank": 31,
+      "title": "Domestic Violence",
+      "url": "https://rateyourmusic.com/search?searchterm=Domestic+Violence&searchtype=F"
+    },
+    {
+      "rank": 32,
+      "title": "Diary of a School Teacher",
+      "url": "https://rateyourmusic.com/search?searchterm=Diary+of+a+School+Teacher&searchtype=F"
+    },
+    {
+      "rank": 33,
+      "title": "The Grateful Dead Movie",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Grateful+Dead+Movie&searchtype=F"
+    },
+    {
+      "rank": 34,
+      "title": "Chain",
+      "url": "https://rateyourmusic.com/search?searchterm=Chain&searchtype=F"
+    },
+    {
+      "rank": 35,
+      "title": "Chamisso’s Shadow",
+      "url": "https://rateyourmusic.com/search?searchterm=Chamisso%E2%80%99s+Shadow&searchtype=F"
+    },
+    {
+      "rank": 36,
+      "title": "Comrades",
+      "url": "https://rateyourmusic.com/search?searchterm=Comrades&searchtype=F"
+    },
+    {
+      "rank": 37,
+      "title": "Saint Bernard",
+      "url": "https://rateyourmusic.com/search?searchterm=Saint+Bernard&searchtype=F"
+    },
+    {
+      "rank": 38,
+      "title": "Buccaneer Soul",
+      "url": "https://rateyourmusic.com/search?searchterm=Buccaneer+Soul&searchtype=F"
+    },
+    {
+      "rank": 39,
+      "title": "Silvestre",
+      "url": "https://rateyourmusic.com/search?searchterm=Silvestre&searchtype=F"
+    },
+    {
+      "rank": 40,
+      "title": "Stewart Lee: 41st Best Stand-Up Ever!",
+      "url": "https://rateyourmusic.com/search?searchterm=Stewart+Lee%3A+41st+Best+Stand-Up+Ever%21&searchtype=F"
+    },
+    {
+      "rank": 41,
+      "title": "Bounty",
+      "url": "https://rateyourmusic.com/search?searchterm=Bounty&searchtype=F"
+    },
+    {
+      "rank": 42,
+      "title": "Son nom de Venise dans Calcutta désert",
+      "url": "https://rateyourmusic.com/search?searchterm=Son+nom+de+Venise+dans+Calcutta+d%C3%A9sert&searchtype=F"
+    },
+    {
+      "rank": 43,
+      "title": "Casting Blossoms to the Sky",
+      "url": "https://rateyourmusic.com/search?searchterm=Casting+Blossoms+to+the+Sky&searchtype=F"
+    },
+    {
+      "rank": 44,
+      "title": "Black Is… Black Ain’t",
+      "url": "https://rateyourmusic.com/search?searchterm=Black+Is%E2%80%A6+Black+Ain%E2%80%99t&searchtype=F"
+    },
+    {
+      "rank": 45,
+      "title": "Rio, Northern Zone",
+      "url": "https://rateyourmusic.com/search?searchterm=Rio%2C+Northern+Zone&searchtype=F"
+    },
+    {
+      "rank": 46,
+      "title": "Renaissance: A Film by Beyoncé",
+      "url": "https://rateyourmusic.com/search?searchterm=Renaissance%3A+A+Film+by+Beyonc%C3%A9&searchtype=F"
+    },
+    {
+      "rank": 47,
+      "title": "Tom Waits: Big Time",
+      "url": "https://rateyourmusic.com/search?searchterm=Tom+Waits%3A+Big+Time&searchtype=F"
+    },
+    {
+      "rank": 48,
+      "title": "Gaza Fights for Freedom",
+      "url": "https://rateyourmusic.com/search?searchterm=Gaza+Fights+for+Freedom&searchtype=F"
+    },
+    {
+      "rank": 49,
+      "title": "The Secret Nation",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Secret+Nation&searchtype=F"
+    },
+    {
+      "rank": 50,
+      "title": "The Fear",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Fear&searchtype=F"
+    },
+    {
+      "rank": 51,
+      "title": "WWE: The Rise + Fall of ECW",
+      "url": "https://rateyourmusic.com/search?searchterm=WWE%3A+The+Rise+%2B+Fall+of+ECW&searchtype=F"
+    },
+    {
+      "rank": 52,
+      "title": "Angels Who Burn Their Wings",
+      "url": "https://rateyourmusic.com/search?searchterm=Angels+Who+Burn+Their+Wings&searchtype=F"
+    },
+    {
+      "rank": 53,
+      "title": "Ethel & Ernest",
+      "url": "https://rateyourmusic.com/search?searchterm=Ethel+%26+Ernest&searchtype=F"
+    },
+    {
+      "rank": 54,
+      "title": "Wasteland",
+      "url": "https://rateyourmusic.com/search?searchterm=Wasteland&searchtype=F"
+    },
+    {
+      "rank": 55,
+      "title": "A Story of Yonosuke",
+      "url": "https://rateyourmusic.com/search?searchterm=A+Story+of+Yonosuke&searchtype=F"
+    },
+    {
+      "rank": 56,
+      "title": "Norm Macdonald: Me Doing Standup",
+      "url": "https://rateyourmusic.com/search?searchterm=Norm+Macdonald%3A+Me+Doing+Standup&searchtype=F"
+    },
+    {
+      "rank": 57,
+      "title": "Mushi-Shi: The Next Chapter - Drops of Bells",
+      "url": "https://rateyourmusic.com/search?searchterm=Mushi-Shi%3A+The+Next+Chapter+-+Drops+of+Bells&searchtype=F"
+    },
+    {
+      "rank": 58,
+      "title": "Revue Starlight: The Movie",
+      "url": "https://rateyourmusic.com/search?searchterm=Revue+Starlight%3A+The+Movie&searchtype=F"
+    },
+    {
+      "rank": 59,
+      "title": "Urgh! A Music War",
+      "url": "https://rateyourmusic.com/search?searchterm=Urgh%21+A+Music+War&searchtype=F"
+    },
+    {
+      "rank": 60,
+      "title": "Ladies & Gentlemen, the Rolling Stones",
+      "url": "https://rateyourmusic.com/search?searchterm=Ladies+%26+Gentlemen%2C+the+Rolling+Stones&searchtype=F"
+    },
+    {
+      "rank": 61,
+      "title": "My Son, the Hero",
+      "url": "https://rateyourmusic.com/search?searchterm=My+Son%2C+the+Hero&searchtype=F"
+    },
+    {
+      "rank": 62,
+      "title": "Chibi Maruko-chan: My Favorite Song",
+      "url": "https://rateyourmusic.com/search?searchterm=Chibi+Maruko-chan%3A+My+Favorite+Song&searchtype=F"
+    },
+    {
+      "rank": 63,
+      "title": "Tux and Fanny",
+      "url": "https://rateyourmusic.com/search?searchterm=Tux+and+Fanny&searchtype=F"
+    },
+    {
+      "rank": 64,
+      "title": "Aren't We Wonderful",
+      "url": "https://rateyourmusic.com/search?searchterm=Aren%27t+We+Wonderful&searchtype=F"
+    },
+    {
+      "rank": 65,
+      "title": "Case of the Naves Brothers",
+      "url": "https://rateyourmusic.com/search?searchterm=Case+of+the+Naves+Brothers&searchtype=F"
+    },
+    {
+      "rank": 66,
+      "title": "Juan: As If Nothing Ever Happened",
+      "url": "https://rateyourmusic.com/search?searchterm=Juan%3A+As+If+Nothing+Ever+Happened&searchtype=F"
+    },
+    {
+      "rank": 67,
+      "title": "Chunky Shrapnel",
+      "url": "https://rateyourmusic.com/search?searchterm=Chunky+Shrapnel&searchtype=F"
+    },
+    {
+      "rank": 68,
+      "title": "Turn It Around: The Story of East Bay Punk",
+      "url": "https://rateyourmusic.com/search?searchterm=Turn+It+Around%3A+The+Story+of+East+Bay+Punk&searchtype=F"
+    },
+    {
+      "rank": 69,
+      "title": "The Counterfeit Coin",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Counterfeit+Coin&searchtype=F"
+    },
+    {
+      "rank": 70,
+      "title": "The Cruise",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Cruise&searchtype=F"
+    },
+    {
+      "rank": 71,
+      "title": "The Works and Days (of Tayoko Shiojiri in the Shiotani Basin)",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Works+and+Days+%28of+Tayoko+Shiojiri+in+the+Shiotani+Basin%29&searchtype=F"
+    },
+    {
+      "rank": 72,
+      "title": "Mother Dao, the Turtlelike",
+      "url": "https://rateyourmusic.com/search?searchterm=Mother+Dao%2C+the+Turtlelike&searchtype=F"
+    },
+    {
+      "rank": 73,
+      "title": "Investigation Held by Kolobki",
+      "url": "https://rateyourmusic.com/search?searchterm=Investigation+Held+by+Kolobki&searchtype=F"
+    },
+    {
+      "rank": 74,
+      "title": "The Concert for Bangladesh",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Concert+for+Bangladesh&searchtype=F"
+    },
+    {
+      "rank": 75,
+      "title": "Personal Problems",
+      "url": "https://rateyourmusic.com/search?searchterm=Personal+Problems&searchtype=F"
+    },
+    {
+      "rank": 76,
+      "title": "Kaguya-sama: Love Is War -The First Kiss That Never Ends-",
+      "url": "https://rateyourmusic.com/search?searchterm=Kaguya-sama%3A+Love+Is+War+-The+First+Kiss+That+Never+Ends-&searchtype=F"
+    },
+    {
+      "rank": 77,
+      "title": "Pokémon the Movie: I Choose You!",
+      "url": "https://rateyourmusic.com/search?searchterm=Pok%C3%A9mon+the+Movie%3A+I+Choose+You%21&searchtype=F"
+    },
+    {
+      "rank": 78,
+      "title": "The Disenchantment",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Disenchantment&searchtype=F"
+    },
+    {
+      "rank": 79,
+      "title": "Searching for the Wrong-Eyed Jesus",
+      "url": "https://rateyourmusic.com/search?searchterm=Searching+for+the+Wrong-Eyed+Jesus&searchtype=F"
+    },
+    {
+      "rank": 80,
+      "title": "Space Runaway Ideon: Be Invoked",
+      "url": "https://rateyourmusic.com/search?searchterm=Space+Runaway+Ideon%3A+Be+Invoked&searchtype=F"
+    },
+    {
+      "rank": 81,
+      "title": "The Company of Strangers",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Company+of+Strangers&searchtype=F"
+    },
+    {
+      "rank": 82,
+      "title": "Rome 11:00",
+      "url": "https://rateyourmusic.com/search?searchterm=Rome+11%3A00&searchtype=F"
+    },
+    {
+      "rank": 83,
+      "title": "Florentina Hubaldo, CTE",
+      "url": "https://rateyourmusic.com/search?searchterm=Florentina+Hubaldo%2C+CTE&searchtype=F"
+    },
+    {
+      "rank": 84,
+      "title": "They Don't Wear Black Tie",
+      "url": "https://rateyourmusic.com/search?searchterm=They+Don%27t+Wear+Black+Tie&searchtype=F"
+    },
+    {
+      "rank": 85,
+      "title": "Why Is Yellow the Middle of the Rainbow?",
+      "url": "https://rateyourmusic.com/search?searchterm=Why+Is+Yellow+the+Middle+of+the+Rainbow%3F&searchtype=F"
+    },
+    {
+      "rank": 86,
+      "title": "In the Beginning Was the End: The Truth About De-Evolution",
+      "url": "https://rateyourmusic.com/search?searchterm=In+the+Beginning+Was+the+End%3A+The+Truth+About+De-Evolution&searchtype=F"
+    },
+    {
+      "rank": 87,
+      "title": "Parsifal",
+      "url": "https://rateyourmusic.com/search?searchterm=Parsifal&searchtype=F"
+    },
+    {
+      "rank": 88,
+      "title": "Utopia",
+      "url": "https://rateyourmusic.com/search?searchterm=Utopia&searchtype=F"
+    },
+    {
+      "rank": 89,
+      "title": "King Lear",
+      "url": "https://rateyourmusic.com/search?searchterm=King+Lear&searchtype=F"
+    },
+    {
+      "rank": 90,
+      "title": "Under the Bridges",
+      "url": "https://rateyourmusic.com/search?searchterm=Under+the+Bridges&searchtype=F"
+    },
+    {
+      "rank": 91,
+      "title": "Strangler vs Strangler",
+      "url": "https://rateyourmusic.com/search?searchterm=Strangler+vs+Strangler&searchtype=F"
+    },
+    {
+      "rank": 92,
+      "title": "Lamentations: A Monument to the Dead World, Part 1: The Dream of the Last Historian",
+      "url": "https://rateyourmusic.com/search?searchterm=Lamentations%3A+A+Monument+to+the+Dead+World%2C+Part+1%3A+The+Dream+of+the+Last+Historian&searchtype=F"
+    },
+    {
+      "rank": 93,
+      "title": "The Elder Son",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Elder+Son&searchtype=F"
+    },
+    {
+      "rank": 94,
+      "title": "Kanehsatake, 270 Years of Resistance",
+      "url": "https://rateyourmusic.com/search?searchterm=Kanehsatake%2C+270+Years+of+Resistance&searchtype=F"
+    },
+    {
+      "rank": 95,
+      "title": "Histoire(s) du Cinéma 3a: The Coin of the Absolute",
+      "url": "https://rateyourmusic.com/search?searchterm=Histoire%28s%29+du+Cin%C3%A9ma+3a%3A+The+Coin+of+the+Absolute&searchtype=F"
+    },
+    {
+      "rank": 96,
+      "title": "Wait Till the Sun Shines, Nellie",
+      "url": "https://rateyourmusic.com/search?searchterm=Wait+Till+the+Sun+Shines%2C+Nellie&searchtype=F"
+    },
+    {
+      "rank": 97,
+      "title": "The Who: Live at the Isle of Wight Festival 1970",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Who%3A+Live+at+the+Isle+of+Wight+Festival+1970&searchtype=F"
+    },
+    {
+      "rank": 98,
+      "title": "The Memory of Justice",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Memory+of+Justice&searchtype=F"
+    },
+    {
+      "rank": 99,
+      "title": "They Fought for Their Motherland",
+      "url": "https://rateyourmusic.com/search?searchterm=They+Fought+for+Their+Motherland&searchtype=F"
+    },
+    {
+      "rank": 100,
+      "title": "Shake! Otis at Monterey",
+      "url": "https://rateyourmusic.com/search?searchterm=Shake%21+Otis+at+Monterey&searchtype=F"
+    },
+    {
+      "rank": 101,
+      "title": "King: A Filmed Record... Montgomery to Memphis",
+      "url": "https://rateyourmusic.com/search?searchterm=King%3A+A+Filmed+Record...+Montgomery+to+Memphis&searchtype=F"
+    },
+    {
+      "rank": 102,
+      "title": "Ghost in the Shell: Stand Alone Complex - The Laughing Man",
+      "url": "https://rateyourmusic.com/search?searchterm=Ghost+in+the+Shell%3A+Stand+Alone+Complex+-+The+Laughing+Man&searchtype=F"
+    },
+    {
+      "rank": 103,
+      "title": "Bound for the Fields, the Mountains, and the Seacoast",
+      "url": "https://rateyourmusic.com/search?searchterm=Bound+for+the+Fields%2C+the+Mountains%2C+and+the+Seacoast&searchtype=F"
+    },
+    {
+      "rank": 104,
+      "title": "The Adventures of Sherlock Holmes and Dr. Watson: Mortal Fight",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Adventures+of+Sherlock+Holmes+and+Dr.+Watson%3A+Mortal+Fight&searchtype=F"
+    },
+    {
+      "rank": 105,
+      "title": "Alexander the Great",
+      "url": "https://rateyourmusic.com/search?searchterm=Alexander+the+Great&searchtype=F"
+    },
+    {
+      "rank": 106,
+      "title": "Twas the Chaos Before Christmas",
+      "url": "https://rateyourmusic.com/search?searchterm=Twas+the+Chaos+Before+Christmas&searchtype=F"
+    },
+    {
+      "rank": 107,
+      "title": "Suburban Angels",
+      "url": "https://rateyourmusic.com/search?searchterm=Suburban+Angels&searchtype=F"
+    },
+    {
+      "rank": 108,
+      "title": "Provincetown Pieces",
+      "url": "https://rateyourmusic.com/search?searchterm=Provincetown+Pieces&searchtype=F"
+    },
+    {
+      "rank": 109,
+      "title": "Ten Thousand Days",
+      "url": "https://rateyourmusic.com/search?searchterm=Ten+Thousand+Days&searchtype=F"
+    },
+    {
+      "rank": 110,
+      "title": "Batang West Side",
+      "url": "https://rateyourmusic.com/search?searchterm=Batang+West+Side&searchtype=F"
+    },
+    {
+      "rank": 111,
+      "title": "Illuminated Texts",
+      "url": "https://rateyourmusic.com/search?searchterm=Illuminated+Texts&searchtype=F"
+    },
+    {
+      "rank": 112,
+      "title": "How Yukong Moved the Mountains",
+      "url": "https://rateyourmusic.com/search?searchterm=How+Yukong+Moved+the+Mountains&searchtype=F"
+    },
+    {
+      "rank": 113,
+      "title": "Balkan Spy",
+      "url": "https://rateyourmusic.com/search?searchterm=Balkan+Spy&searchtype=F"
+    },
+    {
+      "rank": 114,
+      "title": "Ivy",
+      "url": "https://rateyourmusic.com/search?searchterm=Ivy&searchtype=F"
+    },
+    {
+      "rank": 115,
+      "title": "… ere erera baleibu izik subua aruaren…",
+      "url": "https://rateyourmusic.com/search?searchterm=%E2%80%A6+ere+erera+baleibu+izik+subua+aruaren%E2%80%A6&searchtype=F"
+    },
+    {
+      "rank": 116,
+      "title": "On Board",
+      "url": "https://rateyourmusic.com/search?searchterm=On+Board&searchtype=F"
+    },
+    {
+      "rank": 117,
+      "title": "The Million Game",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Million+Game&searchtype=F"
+    },
+    {
+      "rank": 118,
+      "title": "The Spook Who Sat by the Door",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Spook+Who+Sat+by+the+Door&searchtype=F"
+    },
+    {
+      "rank": 119,
+      "title": "Flic",
+      "url": "https://rateyourmusic.com/search?searchterm=Flic&searchtype=F"
+    },
+    {
+      "rank": 120,
+      "title": "Black Gravel",
+      "url": "https://rateyourmusic.com/search?searchterm=Black+Gravel&searchtype=F"
+    },
+    {
+      "rank": 121,
+      "title": "Narcissus and Psyche",
+      "url": "https://rateyourmusic.com/search?searchterm=Narcissus+and+Psyche&searchtype=F"
+    },
+    {
+      "rank": 122,
+      "title": "Consuming Spirits",
+      "url": "https://rateyourmusic.com/search?searchterm=Consuming+Spirits&searchtype=F"
+    },
+    {
+      "rank": 123,
+      "title": "Haru",
+      "url": "https://rateyourmusic.com/search?searchterm=Haru&searchtype=F"
+    },
+    {
+      "rank": 124,
+      "title": "Where Spring Comes Late",
+      "url": "https://rateyourmusic.com/search?searchterm=Where+Spring+Comes+Late&searchtype=F"
+    },
+    {
+      "rank": 125,
+      "title": "The Adventures of Sherlock Holmes and Dr. Watson: King of Blackmailers",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Adventures+of+Sherlock+Holmes+and+Dr.+Watson%3A+King+of+Blackmailers&searchtype=F"
+    },
+    {
+      "rank": 126,
+      "title": "The Tuner",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Tuner&searchtype=F"
+    },
+    {
+      "rank": 127,
+      "title": "Work in Progress",
+      "url": "https://rateyourmusic.com/search?searchterm=Work+in+Progress&searchtype=F"
+    },
+    {
+      "rank": 128,
+      "title": "The PriceMaster",
+      "url": "https://rateyourmusic.com/search?searchterm=The+PriceMaster&searchtype=F"
+    },
+    {
+      "rank": 129,
+      "title": "Life Goes On",
+      "url": "https://rateyourmusic.com/search?searchterm=Life+Goes+On&searchtype=F"
+    },
+    {
+      "rank": 130,
+      "title": "The Rolling Stones: Some Girls - Live in Texas '78",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Rolling+Stones%3A+Some+Girls+-+Live+in+Texas+%2778&searchtype=F"
+    },
+    {
+      "rank": 131,
+      "title": "Warrendale",
+      "url": "https://rateyourmusic.com/search?searchterm=Warrendale&searchtype=F"
+    },
+    {
+      "rank": 132,
+      "title": "Let the Fire Burn",
+      "url": "https://rateyourmusic.com/search?searchterm=Let+the+Fire+Burn&searchtype=F"
+    },
+    {
+      "rank": 133,
+      "title": "Bush Mama",
+      "url": "https://rateyourmusic.com/search?searchterm=Bush+Mama&searchtype=F"
+    },
+    {
+      "rank": 134,
+      "title": "The Middleman",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Middleman&searchtype=F"
+    },
+    {
+      "rank": 135,
+      "title": "Eddie Izzard: Dress to Kill",
+      "url": "https://rateyourmusic.com/search?searchterm=Eddie+Izzard%3A+Dress+to+Kill&searchtype=F"
+    },
+    {
+      "rank": 136,
+      "title": "Dhrupad",
+      "url": "https://rateyourmusic.com/search?searchterm=Dhrupad&searchtype=F"
+    },
+    {
+      "rank": 137,
+      "title": "Demetri Martin: If I",
+      "url": "https://rateyourmusic.com/search?searchterm=Demetri+Martin%3A+If+I&searchtype=F"
+    },
+    {
+      "rank": 138,
+      "title": "Nelson Cavaquinho",
+      "url": "https://rateyourmusic.com/search?searchterm=Nelson+Cavaquinho&searchtype=F"
+    },
+    {
+      "rank": 139,
+      "title": "Decker: Port of Call – Hawaii",
+      "url": "https://rateyourmusic.com/search?searchterm=Decker%3A+Port+of+Call+%E2%80%93+Hawaii&searchtype=F"
+    },
+    {
+      "rank": 140,
+      "title": "Cloud Heaven",
+      "url": "https://rateyourmusic.com/search?searchterm=Cloud+Heaven&searchtype=F"
+    },
+    {
+      "rank": 141,
+      "title": "Ordinary Miracle",
+      "url": "https://rateyourmusic.com/search?searchterm=Ordinary+Miracle&searchtype=F"
+    },
+    {
+      "rank": 142,
+      "title": "Island of Loves",
+      "url": "https://rateyourmusic.com/search?searchterm=Island+of+Loves&searchtype=F"
+    },
+    {
+      "rank": 143,
+      "title": "Femmes femmes",
+      "url": "https://rateyourmusic.com/search?searchterm=Femmes+femmes&searchtype=F"
+    },
+    {
+      "rank": 144,
+      "title": "There Is Such a Lad",
+      "url": "https://rateyourmusic.com/search?searchterm=There+Is+Such+a+Lad&searchtype=F"
+    },
+    {
+      "rank": 145,
+      "title": "Springsteen on Broadway",
+      "url": "https://rateyourmusic.com/search?searchterm=Springsteen+on+Broadway&searchtype=F"
+    },
+    {
+      "rank": 146,
+      "title": "Wojaczek",
+      "url": "https://rateyourmusic.com/search?searchterm=Wojaczek&searchtype=F"
+    },
+    {
+      "rank": 147,
+      "title": "The Mayfair Set",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Mayfair+Set&searchtype=F"
+    },
+    {
+      "rank": 148,
+      "title": "School on Fire",
+      "url": "https://rateyourmusic.com/search?searchterm=School+on+Fire&searchtype=F"
+    },
+    {
+      "rank": 149,
+      "title": "North Korea: The Parade",
+      "url": "https://rateyourmusic.com/search?searchterm=North+Korea%3A+The+Parade&searchtype=F"
+    },
+    {
+      "rank": 150,
+      "title": "Dying at Grace",
+      "url": "https://rateyourmusic.com/search?searchterm=Dying+at+Grace&searchtype=F"
+    },
+    {
+      "rank": 151,
+      "title": "Smile Guide",
+      "url": "https://rateyourmusic.com/search?searchterm=Smile+Guide&searchtype=F"
+    },
+    {
+      "rank": 152,
+      "title": "Hot Wheels: World Race",
+      "url": "https://rateyourmusic.com/search?searchterm=Hot+Wheels%3A+World+Race&searchtype=F"
+    },
+    {
+      "rank": 153,
+      "title": "Ricky Jay and His 52 Assistants",
+      "url": "https://rateyourmusic.com/search?searchterm=Ricky+Jay+and+His+52+Assistants&searchtype=F"
+    },
+    {
+      "rank": 154,
+      "title": "My Chemical Romance: Life on the Murder Scene",
+      "url": "https://rateyourmusic.com/search?searchterm=My+Chemical+Romance%3A+Life+on+the+Murder+Scene&searchtype=F"
+    },
+    {
+      "rank": 155,
+      "title": "Mushi-Shi: The Shadow That Devours the Sun",
+      "url": "https://rateyourmusic.com/search?searchterm=Mushi-Shi%3A+The+Shadow+That+Devours+the+Sun&searchtype=F"
+    },
+    {
+      "rank": 156,
+      "title": "Sunday in the Park with George",
+      "url": "https://rateyourmusic.com/search?searchterm=Sunday+in+the+Park+with+George&searchtype=F"
+    },
+    {
+      "rank": 157,
+      "title": "Hill of No Return",
+      "url": "https://rateyourmusic.com/search?searchterm=Hill+of+No+Return&searchtype=F"
+    },
+    {
+      "rank": 158,
+      "title": "Bottom Live: The Stage Show",
+      "url": "https://rateyourmusic.com/search?searchterm=Bottom+Live%3A+The+Stage+Show&searchtype=F"
+    },
+    {
+      "rank": 159,
+      "title": "Limbo: The Organized Mind",
+      "url": "https://rateyourmusic.com/search?searchterm=Limbo%3A+The+Organized+Mind&searchtype=F"
+    },
+    {
+      "rank": 160,
+      "title": "The Beatles: The First U.S. Visit",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Beatles%3A+The+First+U.S.+Visit&searchtype=F"
+    },
+    {
+      "rank": 161,
+      "title": "The Long Holiday",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Long+Holiday&searchtype=F"
+    },
+    {
+      "rank": 162,
+      "title": "HAND",
+      "url": "https://rateyourmusic.com/search?searchterm=HAND&searchtype=F"
+    },
+    {
+      "rank": 163,
+      "title": "Pajarito Gómez",
+      "url": "https://rateyourmusic.com/search?searchterm=Pajarito+G%C3%B3mez&searchtype=F"
+    },
+    {
+      "rank": 164,
+      "title": "The Outskirts",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Outskirts&searchtype=F"
+    },
+    {
+      "rank": 165,
+      "title": "Lucky Three: An Elliott Smith Portrait",
+      "url": "https://rateyourmusic.com/search?searchterm=Lucky+Three%3A+An+Elliott+Smith+Portrait&searchtype=F"
+    },
+    {
+      "rank": 166,
+      "title": "The Man with the Balloons",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Man+with+the+Balloons&searchtype=F"
+    },
+    {
+      "rank": 167,
+      "title": "To the Left of the Father",
+      "url": "https://rateyourmusic.com/search?searchterm=To+the+Left+of+the+Father&searchtype=F"
+    },
+    {
+      "rank": 168,
+      "title": "The Adventures of Sherlock Holmes and Dr. Watson: Hunting the Tiger",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Adventures+of+Sherlock+Holmes+and+Dr.+Watson%3A+Hunting+the+Tiger&searchtype=F"
+    },
+    {
+      "rank": 169,
+      "title": "Always for Pleasure",
+      "url": "https://rateyourmusic.com/search?searchterm=Always+for+Pleasure&searchtype=F"
+    },
+    {
+      "rank": 170,
+      "title": "The Long Darkness",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Long+Darkness&searchtype=F"
+    },
+    {
+      "rank": 171,
+      "title": "Two Comrades Were Serving",
+      "url": "https://rateyourmusic.com/search?searchterm=Two+Comrades+Were+Serving&searchtype=F"
+    },
+    {
+      "rank": 172,
+      "title": "Siddheshwari",
+      "url": "https://rateyourmusic.com/search?searchterm=Siddheshwari&searchtype=F"
+    },
+    {
+      "rank": 173,
+      "title": "Nirvana: Live at the Paramount",
+      "url": "https://rateyourmusic.com/search?searchterm=Nirvana%3A+Live+at+the+Paramount&searchtype=F"
+    },
+    {
+      "rank": 174,
+      "title": "Patrice O'Neal: Elephant in the Room",
+      "url": "https://rateyourmusic.com/search?searchterm=Patrice+O%27Neal%3A+Elephant+in+the+Room&searchtype=F"
+    },
+    {
+      "rank": 175,
+      "title": "Birthplace",
+      "url": "https://rateyourmusic.com/search?searchterm=Birthplace&searchtype=F"
+    },
+    {
+      "rank": 176,
+      "title": "Pride",
+      "url": "https://rateyourmusic.com/search?searchterm=Pride&searchtype=F"
+    },
+    {
+      "rank": 177,
+      "title": "Public Housing",
+      "url": "https://rateyourmusic.com/search?searchterm=Public+Housing&searchtype=F"
+    },
+    {
+      "rank": 178,
+      "title": "A Lullaby to the Sorrowful Mystery",
+      "url": "https://rateyourmusic.com/search?searchterm=A+Lullaby+to+the+Sorrowful+Mystery&searchtype=F"
+    },
+    {
+      "rank": 179,
+      "title": "Bananaz",
+      "url": "https://rateyourmusic.com/search?searchterm=Bananaz&searchtype=F"
+    },
+    {
+      "rank": 180,
+      "title": "Chizuko's Younger Sister",
+      "url": "https://rateyourmusic.com/search?searchterm=Chizuko%27s+Younger+Sister&searchtype=F"
+    },
+    {
+      "rank": 181,
+      "title": "The Approach of Autumn",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Approach+of+Autumn&searchtype=F"
+    },
+    {
+      "rank": 182,
+      "title": "Rat Pack",
+      "url": "https://rateyourmusic.com/search?searchterm=Rat+Pack&searchtype=F"
+    },
+    {
+      "rank": 183,
+      "title": "The Savage Eye",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Savage+Eye&searchtype=F"
+    },
+    {
+      "rank": 184,
+      "title": "Heimat 3: A Chronicle of Endings and Beginnings",
+      "url": "https://rateyourmusic.com/search?searchterm=Heimat+3%3A+A+Chronicle+of+Endings+and+Beginnings&searchtype=F"
+    },
+    {
+      "rank": 185,
+      "title": "Muddy River",
+      "url": "https://rateyourmusic.com/search?searchterm=Muddy+River&searchtype=F"
+    },
+    {
+      "rank": 186,
+      "title": "Crime and Punishment",
+      "url": "https://rateyourmusic.com/search?searchterm=Crime+and+Punishment&searchtype=F"
+    },
+    {
+      "rank": 187,
+      "title": "Flights in Dreams and in Reality",
+      "url": "https://rateyourmusic.com/search?searchterm=Flights+in+Dreams+and+in+Reality&searchtype=F"
+    },
+    {
+      "rank": 188,
+      "title": "The Girl from Parma",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Girl+from+Parma&searchtype=F"
+    },
+    {
+      "rank": 189,
+      "title": "Laugh, Clown, Laugh",
+      "url": "https://rateyourmusic.com/search?searchterm=Laugh%2C+Clown%2C+Laugh&searchtype=F"
+    },
+    {
+      "rank": 190,
+      "title": "Videograms of a Revolution",
+      "url": "https://rateyourmusic.com/search?searchterm=Videograms+of+a+Revolution&searchtype=F"
+    },
+    {
+      "rank": 191,
+      "title": "Wattstax",
+      "url": "https://rateyourmusic.com/search?searchterm=Wattstax&searchtype=F"
+    },
+    {
+      "rank": 192,
+      "title": "The L-Shaped Room",
+      "url": "https://rateyourmusic.com/search?searchterm=The+L-Shaped+Room&searchtype=F"
+    },
+    {
+      "rank": 193,
+      "title": "A Child’s Garden and the Serious Sea",
+      "url": "https://rateyourmusic.com/search?searchterm=A+Child%E2%80%99s+Garden+and+the+Serious+Sea&searchtype=F"
+    },
+    {
+      "rank": 194,
+      "title": "BloodSisters: Leather, Dykes, and Sadomasochism",
+      "url": "https://rateyourmusic.com/search?searchterm=BloodSisters%3A+Leather%2C+Dykes%2C+and+Sadomasochism&searchtype=F"
+    },
+    {
+      "rank": 195,
+      "title": "Gintama: The Final Chapter - Be Forever Yorozuya",
+      "url": "https://rateyourmusic.com/search?searchterm=Gintama%3A+The+Final+Chapter+-+Be+Forever+Yorozuya&searchtype=F"
+    },
+    {
+      "rank": 196,
+      "title": "Nine Inch Nails: Beside You in Time",
+      "url": "https://rateyourmusic.com/search?searchterm=Nine+Inch+Nails%3A+Beside+You+in+Time&searchtype=F"
+    },
+    {
+      "rank": 197,
+      "title": "Hospital of the Transfiguration",
+      "url": "https://rateyourmusic.com/search?searchterm=Hospital+of+the+Transfiguration&searchtype=F"
+    },
+    {
+      "rank": 198,
+      "title": "Scarecrow",
+      "url": "https://rateyourmusic.com/search?searchterm=Scarecrow&searchtype=F"
+    },
+    {
+      "rank": 199,
+      "title": "Goodbye Forever Party",
+      "url": "https://rateyourmusic.com/search?searchterm=Goodbye+Forever+Party&searchtype=F"
+    },
+    {
+      "rank": 200,
+      "title": "The Spousals of God",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Spousals+of+God&searchtype=F"
+    },
+    {
+      "rank": 201,
+      "title": "Horizons",
+      "url": "https://rateyourmusic.com/search?searchterm=Horizons&searchtype=F"
+    },
+    {
+      "rank": 202,
+      "title": "Tropical Fish",
+      "url": "https://rateyourmusic.com/search?searchterm=Tropical+Fish&searchtype=F"
+    },
+    {
+      "rank": 203,
+      "title": "Yeah Right!",
+      "url": "https://rateyourmusic.com/search?searchterm=Yeah+Right%21&searchtype=F"
+    },
+    {
+      "rank": 204,
+      "title": "Disorder in the Court",
+      "url": "https://rateyourmusic.com/search?searchterm=Disorder+in+the+Court&searchtype=F"
+    },
+    {
+      "rank": 205,
+      "title": "Sweeney Todd: The Demon Barber of Fleet Street",
+      "url": "https://rateyourmusic.com/search?searchterm=Sweeney+Todd%3A+The+Demon+Barber+of+Fleet+Street&searchtype=F"
+    },
+    {
+      "rank": 206,
+      "title": "Treatment",
+      "url": "https://rateyourmusic.com/search?searchterm=Treatment&searchtype=F"
+    },
+    {
+      "rank": 207,
+      "title": "Anything Can Happen",
+      "url": "https://rateyourmusic.com/search?searchterm=Anything+Can+Happen&searchtype=F"
+    },
+    {
+      "rank": 208,
+      "title": "Soul in the Eye",
+      "url": "https://rateyourmusic.com/search?searchterm=Soul+in+the+Eye&searchtype=F"
+    },
+    {
+      "rank": 209,
+      "title": "Heroes for Sale",
+      "url": "https://rateyourmusic.com/search?searchterm=Heroes+for+Sale&searchtype=F"
+    },
+    {
+      "rank": 210,
+      "title": "The Expedition",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Expedition&searchtype=F"
+    },
+    {
+      "rank": 211,
+      "title": "A Well Spent Life",
+      "url": "https://rateyourmusic.com/search?searchterm=A+Well+Spent+Life&searchtype=F"
+    },
+    {
+      "rank": 212,
+      "title": "Baker 3",
+      "url": "https://rateyourmusic.com/search?searchterm=Baker+3&searchtype=F"
+    },
+    {
+      "rank": 213,
+      "title": "An Inn at Osaka",
+      "url": "https://rateyourmusic.com/search?searchterm=An+Inn+at+Osaka&searchtype=F"
+    },
+    {
+      "rank": 214,
+      "title": "Joni Mitchell: Shadows and Light",
+      "url": "https://rateyourmusic.com/search?searchterm=Joni+Mitchell%3A+Shadows+and+Light&searchtype=F"
+    },
+    {
+      "rank": 215,
+      "title": "Port of Freedom",
+      "url": "https://rateyourmusic.com/search?searchterm=Port+of+Freedom&searchtype=F"
+    },
+    {
+      "rank": 216,
+      "title": "The Apartment Above",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Apartment+Above&searchtype=F"
+    },
+    {
+      "rank": 217,
+      "title": "The Wishing Tree",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Wishing+Tree&searchtype=F"
+    },
+    {
+      "rank": 218,
+      "title": "The Wolves",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Wolves&searchtype=F"
+    },
+    {
+      "rank": 219,
+      "title": "It's Yours: A Film on Hip-Hop and the Internet",
+      "url": "https://rateyourmusic.com/search?searchterm=It%27s+Yours%3A+A+Film+on+Hip-Hop+and+the+Internet&searchtype=F"
+    },
+    {
+      "rank": 220,
+      "title": "Farewell",
+      "url": "https://rateyourmusic.com/search?searchterm=Farewell&searchtype=F"
+    },
+    {
+      "rank": 221,
+      "title": "The Year of the Discovery",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Year+of+the+Discovery&searchtype=F"
+    },
+    {
+      "rank": 222,
+      "title": "Hands on a Hardbody: The Documentary",
+      "url": "https://rateyourmusic.com/search?searchterm=Hands+on+a+Hardbody%3A+The+Documentary&searchtype=F"
+    },
+    {
+      "rank": 223,
+      "title": "Gallivant",
+      "url": "https://rateyourmusic.com/search?searchterm=Gallivant&searchtype=F"
+    },
+    {
+      "rank": 224,
+      "title": "Little Man, What Now?",
+      "url": "https://rateyourmusic.com/search?searchterm=Little+Man%2C+What+Now%3F&searchtype=F"
+    },
+    {
+      "rank": 225,
+      "title": "Patterns",
+      "url": "https://rateyourmusic.com/search?searchterm=Patterns&searchtype=F"
+    },
+    {
+      "rank": 226,
+      "title": "The Sound of Miles Davis",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Sound+of+Miles+Davis&searchtype=F"
+    },
+    {
+      "rank": 227,
+      "title": "The Days When I Don’t Exist",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Days+When+I+Don%E2%80%99t+Exist&searchtype=F"
+    },
+    {
+      "rank": 228,
+      "title": "The Naked Civil Servant",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Naked+Civil+Servant&searchtype=F"
+    },
+    {
+      "rank": 229,
+      "title": "Wrong Side Up",
+      "url": "https://rateyourmusic.com/search?searchterm=Wrong+Side+Up&searchtype=F"
+    },
+    {
+      "rank": 230,
+      "title": "The Flight",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Flight&searchtype=F"
+    },
+    {
+      "rank": 231,
+      "title": "Maya",
+      "url": "https://rateyourmusic.com/search?searchterm=Maya&searchtype=F"
+    },
+    {
+      "rank": 232,
+      "title": "The Whisperers",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Whisperers&searchtype=F"
+    },
+    {
+      "rank": 233,
+      "title": "Jammin' the Blues",
+      "url": "https://rateyourmusic.com/search?searchterm=Jammin%27+the+Blues&searchtype=F"
+    },
+    {
+      "rank": 234,
+      "title": "Kaos",
+      "url": "https://rateyourmusic.com/search?searchterm=Kaos&searchtype=F"
+    },
+    {
+      "rank": 235,
+      "title": "Joan the Maid II: The Prisons",
+      "url": "https://rateyourmusic.com/search?searchterm=Joan+the+Maid+II%3A+The+Prisons&searchtype=F"
+    },
+    {
+      "rank": 236,
+      "title": "Farewell, Home Sweet Home",
+      "url": "https://rateyourmusic.com/search?searchterm=Farewell%2C+Home+Sweet+Home&searchtype=F"
+    },
+    {
+      "rank": 237,
+      "title": "Feyzo, The Polite One",
+      "url": "https://rateyourmusic.com/search?searchterm=Feyzo%2C+The+Polite+One&searchtype=F"
+    },
+    {
+      "rank": 238,
+      "title": "A Wife Confesses",
+      "url": "https://rateyourmusic.com/search?searchterm=A+Wife+Confesses&searchtype=F"
+    },
+    {
+      "rank": 239,
+      "title": "London",
+      "url": "https://rateyourmusic.com/search?searchterm=London&searchtype=F"
+    },
+    {
+      "rank": 240,
+      "title": "Jigarthanda DoubleX",
+      "url": "https://rateyourmusic.com/search?searchterm=Jigarthanda+DoubleX&searchtype=F"
+    },
+    {
+      "rank": 241,
+      "title": "Travolta and Me",
+      "url": "https://rateyourmusic.com/search?searchterm=Travolta+and+Me&searchtype=F"
+    },
+    {
+      "rank": 242,
+      "title": "School's Out!",
+      "url": "https://rateyourmusic.com/search?searchterm=School%27s+Out%21&searchtype=F"
+    },
+    {
+      "rank": 243,
+      "title": "The Day Dorival Faced the Guard",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Day+Dorival+Faced+the+Guard&searchtype=F"
+    },
+    {
+      "rank": 244,
+      "title": "Threnody",
+      "url": "https://rateyourmusic.com/search?searchterm=Threnody&searchtype=F"
+    },
+    {
+      "rank": 245,
+      "title": "Selva. A Portrait of Parvaneh Navaï",
+      "url": "https://rateyourmusic.com/search?searchterm=Selva.+A+Portrait+of+Parvaneh+Nava%C3%AF&searchtype=F"
+    },
+    {
+      "rank": 246,
+      "title": "SuperOutro",
+      "url": "https://rateyourmusic.com/search?searchterm=SuperOutro&searchtype=F"
+    },
+    {
+      "rank": 247,
+      "title": "The Pokrovsky Gates",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Pokrovsky+Gates&searchtype=F"
+    },
+    {
+      "rank": 248,
+      "title": "The Stolen Airship",
+      "url": "https://rateyourmusic.com/search?searchterm=The+Stolen+Airship&searchtype=F"
+    },
+    {
+      "rank": 249,
+      "title": "Lamentations: A Monument to the Dead World, Part 2: The Sublime Calculation",
+      "url": "https://rateyourmusic.com/search?searchterm=Lamentations%3A+A+Monument+to+the+Dead+World%2C+Part+2%3A+The+Sublime+Calculation&searchtype=F"
+    },
+    {
+      "rank": 250,
+      "title": "AMERICAN REFLEXXX",
+      "url": "https://rateyourmusic.com/search?searchterm=AMERICAN+REFLEXXX&searchtype=F"
+    }
+  ]
+}
