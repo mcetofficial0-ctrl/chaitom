@@ -51,6 +51,11 @@ chat_client = OpenAI(api_key=OPENAI_API_KEY)
 
 HISTORY_FILE = "chat_history.json"
 HISTORY_LIMIT = 1000
+RYM_ALBUMS_FILE = os.path.join(os.path.dirname(__file__), "rym_albums.json")
+RYM_CHART_URL = (
+    "https://rateyourmusic.com/charts/esoteric/album/all-time/"
+    "g:%2dclassical%2dmusic/separate:live,archival,soundtrack/"
+)
 
 def load_chat_history():
     """Загружает историю из файла при старте скрипта"""
@@ -77,6 +82,25 @@ def save_chat_history():
 chat_history = load_chat_history()
 dialog_context = {}
 CONTEXT_LIMIT = 15
+
+def load_rym_albums():
+    """Загружает локальный снимок чарта RYM без запросов к защищённой странице."""
+    try:
+        with open(RYM_ALBUMS_FILE, "r", encoding="utf-8") as f:
+            albums = json.load(f)
+        valid_albums = [
+            album for album in albums
+            if isinstance(album, dict)
+            and album.get("title")
+            and album.get("url", "").startswith("https://rateyourmusic.com/release/")
+        ]
+        print(f"Загружено {len(valid_albums)} альбомов из чарта RYM.")
+        return valid_albums
+    except Exception as e:
+        print("Ошибка загрузки каталога RYM:", e)
+        return []
+
+rym_albums = load_rym_albums()
 
 # ==========================================================
 # AI MODELS
@@ -177,6 +201,79 @@ def is_command(message, names):
         text,
         re.IGNORECASE
     ))
+
+def download_rym_cover(url):
+    """Скачивает обложку RYM CDN для отправки в Telegram."""
+    response = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; ChaitomBot/1.0)"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    if "image" not in response.headers.get("Content-Type", "").lower():
+        raise RuntimeError("RYM вернул не изображение")
+    if len(response.content) > 10 * 1024 * 1024:
+        raise RuntimeError("Обложка RYM слишком большая")
+    return response.content
+
+# ==========================================================
+# RANDOM RATE YOUR MUSIC ALBUM
+# ==========================================================
+
+@bot.message_handler(commands=["rym"])
+def rym_command(message):
+    if not rym_albums:
+        bot.reply_to(message, f"Каталог RYM пока не загрузился. Сам чарт: {RYM_CHART_URL}")
+        return
+
+    candidates = random.sample(rym_albums, min(6, len(rym_albums)))
+    selected = candidates[0]
+    last_error = None
+
+    for album in candidates:
+        if not album.get("cover"):
+            continue
+
+        caption = (
+            f"🎲 RYM #{album.get('rank', '?')}\n"
+            f"{album.get('artist', 'Unknown Artist')} — {album['title']}\n\n"
+            f"{album['url']}"
+        )
+
+        try:
+            cover = io.BytesIO(download_rym_cover(album["cover"]))
+            cover.name = "rym_cover.jpg"
+            bot.send_photo(
+                message.chat.id,
+                cover,
+                caption=caption,
+                reply_to_message_id=message.message_id,
+            )
+            return
+        except Exception as e:
+            last_error = e
+            print("RYM COVER ERROR:", repr(e))
+
+            try:
+                bot.send_photo(
+                    message.chat.id,
+                    album["cover"],
+                    caption=caption,
+                    reply_to_message_id=message.message_id,
+                )
+                return
+            except Exception as telegram_error:
+                last_error = telegram_error
+                print("RYM TELEGRAM COVER ERROR:", repr(telegram_error))
+
+    fallback = (
+        f"🎲 RYM #{selected.get('rank', '?')}\n"
+        f"{selected.get('artist', 'Unknown Artist')} — {selected['title']}\n\n"
+        f"{selected['url']}"
+    )
+    if last_error:
+        print("RYM FINAL ERROR:", repr(last_error))
+    bot.reply_to(message, fallback)
 
 # ==========================================================
 # DRAW — FREE API (HUGGING FACE / FALLBACK)
@@ -729,6 +826,7 @@ def start_command(message):
         "/video — видео\n"
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
+        "/rym — случайный альбом из эзотерического топа RYM\n"
         "/history — статус памяти фраз\n"
         "/import_history — загрузить текстовый файл с фразами"
     )
@@ -744,7 +842,7 @@ def handle_message(message):
         for cmd in [
             ["draw", "gen"], ["edit"], ["video", "vid"],
             ["make_meme"], ["history", "save_history"],
-            ["import_history"], ["music"]
+            ["import_history"], ["music"], ["rym"]
         ]
     ):
         return
