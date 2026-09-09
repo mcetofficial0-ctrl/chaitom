@@ -56,6 +56,9 @@ HISTORY_FILE = "chat_history.json"
 HISTORY_LIMIT = 1000
 RYM_ALBUMS_FILE = os.path.join(os.path.dirname(__file__), "rym_albums.json")
 RYM_FILMS_FILE = os.path.join(os.path.dirname(__file__), "rym_films.json")
+RYM_FILM_COVER_CACHE_FILE = os.path.join(
+    os.path.dirname(__file__), "rym_film_covers.json"
+)
 RYM_FILM_CHART_URL = (
     "https://rateyourmusic.com/charts/esoteric/film/all-time/"
     "separate:live,archival,soundtrack/"
@@ -172,6 +175,233 @@ def load_rym_films():
         return []
 
 rym_films = load_rym_films()
+
+# ==========================================================
+# FILM POSTERS — WIKIPEDIA + LOCAL CACHE
+# ==========================================================
+
+film_cover_cache_lock = threading.Lock()
+
+
+def load_film_cover_cache():
+    """Локальный кеш title/rank -> URL постера."""
+    try:
+        with open(RYM_FILM_COVER_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {
+                str(key): str(value)
+                for key, value in data.items()
+                if isinstance(value, str) and value.startswith("https://")
+            }
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print("FILM COVER CACHE LOAD ERROR:", repr(e), flush=True)
+
+    return {}
+
+
+film_cover_cache = load_film_cover_cache()
+
+
+def save_film_cover_cache():
+    """
+    Сохраняет только найденные ссылки.
+    Запись атомарная, чтобы параллельные /film не портили JSON.
+    """
+    try:
+        tmp_path = RYM_FILM_COVER_CACHE_FILE + ".tmp"
+
+        with film_cover_cache_lock:
+            payload = dict(film_cover_cache)
+
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(
+                payload,
+                f,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+
+        os.replace(tmp_path, RYM_FILM_COVER_CACHE_FILE)
+
+    except Exception as e:
+        print("FILM COVER CACHE SAVE ERROR:", repr(e), flush=True)
+
+
+def film_cover_cache_key(film):
+    return f"{film.get('rank', '')}|{film.get('title', '').strip()}"
+
+
+def normalize_film_title(value):
+    value = str(value or "").casefold()
+    value = re.sub(r"\([^)]*\)", " ", value)
+    value = re.sub(r"[^a-z0-9а-яё]+", " ", value, flags=re.IGNORECASE)
+    return " ".join(value.split())
+
+
+def wikipedia_film_cover(title, language="en"):
+    """
+    Ищет lead image страницы фильма через официальный Wikipedia API.
+    Это НЕ запрос к RateYourMusic.
+    """
+    api_url = f"https://{language}.wikipedia.org/w/api.php"
+
+    # Два запроса повышают шанс найти концертный фильм / мини-сериал
+    # и при этом остаются достаточно быстрыми.
+    queries = [
+        f"{title} film",
+        title,
+    ]
+
+    wanted = normalize_film_title(title)
+
+    for search_text in queries:
+        response = requests.get(
+            api_url,
+            params={
+                "action": "query",
+                "generator": "search",
+                "gsrsearch": search_text,
+                "gsrnamespace": 0,
+                "gsrlimit": 6,
+                "prop": "pageimages",
+                "piprop": "thumbnail|original",
+                "pithumbsize": 900,
+                "format": "json",
+                "formatversion": 2,
+            },
+            headers={
+                "User-Agent": "ChaitomBot/1.0 (Telegram film poster lookup)"
+            },
+            timeout=(4, 7),
+        )
+        response.raise_for_status()
+
+        payload = response.json()
+        pages = payload.get("query", {}).get("pages", [])
+
+        candidates = []
+
+        for page in pages:
+            thumb = (
+                page.get("thumbnail", {}).get("source")
+                or page.get("original", {}).get("source")
+            )
+
+            if not isinstance(thumb, str) or not thumb.startswith("https://"):
+                continue
+
+            page_title = str(page.get("title", ""))
+            page_norm = normalize_film_title(page_title)
+
+            score = 0
+            if page_norm == wanted:
+                score += 100
+            if wanted and wanted in page_norm:
+                score += 60
+            if page_norm and page_norm in wanted:
+                score += 30
+
+            lowered = page_title.casefold()
+            if any(
+                word in lowered
+                for word in (
+                    "film",
+                    "movie",
+                    "concert",
+                    "documentary",
+                    "miniseries",
+                    "tv series",
+                )
+            ):
+                score += 15
+
+            candidates.append((score, thumb))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            return candidates[0][1]
+
+    return None
+
+
+def resolve_film_cover(film):
+    """
+    Порядок:
+    1) cover внутри локального rym_films.json;
+    2) локальный кеш rym_film_covers.json;
+    3) English Wikipedia;
+    4) Russian Wikipedia.
+
+    Страница/чарт RYM здесь вообще не открываются.
+    """
+    embedded = str(film.get("cover", "")).strip()
+    if embedded.startswith("https://"):
+        return embedded
+
+    cache_key = film_cover_cache_key(film)
+
+    with film_cover_cache_lock:
+        cached = film_cover_cache.get(cache_key)
+
+    if cached:
+        return cached
+
+    title = str(film.get("title", "")).strip()
+    if not title:
+        return None
+
+    for language in ("en", "ru"):
+        try:
+            cover_url = wikipedia_film_cover(
+                title,
+                language=language,
+            )
+
+            if cover_url:
+                with film_cover_cache_lock:
+                    film_cover_cache[cache_key] = cover_url
+
+                save_film_cover_cache()
+                return cover_url
+
+        except Exception as e:
+            print(
+                f"FILM COVER {language.upper()} ERROR:",
+                type(e).__name__,
+                str(e)[:250],
+                flush=True,
+            )
+
+    return None
+
+
+def download_film_cover(url):
+    """Скачивает постер для отправки в Telegram."""
+    response = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ChaitomBot/1.0)"
+        },
+        timeout=(4, 10),
+    )
+    response.raise_for_status()
+
+    content_type = response.headers.get("Content-Type", "").lower()
+
+    if "image" not in content_type:
+        raise RuntimeError(
+            f"Источник постера вернул не изображение: {content_type}"
+        )
+
+    if len(response.content) > 10 * 1024 * 1024:
+        raise RuntimeError("Постер слишком большой.")
+
+    return response.content
+
 
 film_health = {
     "status": "ok" if rym_films else "unavailable",
@@ -322,7 +552,10 @@ def rym_command(message):
 
 @bot.message_handler(commands=["film"])
 def film_command(message):
-    """Случайный фильм ТОЛЬКО из локального rym_films.json."""
+    """
+    Выбирает фильм ТОЛЬКО из локального rym_films.json.
+    Постер ищется отдельно через Wikipedia и кешируется локально.
+    """
     if not rym_films:
         bot.reply_to(
             message,
@@ -331,31 +564,95 @@ def film_command(message):
         return
 
     film = random.choice(rym_films)
-    year = f" ({film['year']})" if film.get("year") else ""
 
-    caption = (
-        f"🎬 RYM film #{film['rank']}\n"
-        f"{film['title']}{year}\n\n"
-        f"{film['url']}"
+    status = bot.reply_to(
+        message,
+        "🎬 Выбираю фильм и ищу постер..."
     )
 
-    # Постер, если он уже сохранён в локальном снимке.
-    # Даже загрузка постера НЕ читает страницу чарта RYM.
-    if film.get("cover"):
-        try:
-            cover = io.BytesIO(download_rym_cover(film["cover"]))
-            cover.name = "rym_film.jpg"
-            bot.send_photo(
-                message.chat.id,
-                cover,
-                caption=caption[:1024],
-                reply_to_message_id=message.message_id,
-            )
-            return
-        except Exception as error:
-            print("RYM FILM POSTER ERROR:", type(error).__name__, flush=True)
+    def task():
+        year = f" ({film['year']})" if film.get("year") else ""
 
-    bot.reply_to(message, caption)
+        caption = (
+            f"🎬 RYM film #{film['rank']}\n"
+            f"{film['title']}{year}\n\n"
+            f"{film['url']}"
+        )
+
+        cover_url = None
+
+        try:
+            cover_url = resolve_film_cover(film)
+        except Exception as e:
+            print(
+                "FILM COVER RESOLVE ERROR:",
+                repr(e),
+                flush=True,
+            )
+
+        if cover_url:
+            try:
+                cover_bytes = download_film_cover(cover_url)
+                cover = io.BytesIO(cover_bytes)
+                cover.name = "rym_film_poster.jpg"
+
+                bot.send_photo(
+                    message.chat.id,
+                    cover,
+                    caption=caption[:1024],
+                    reply_to_message_id=message.message_id,
+                )
+
+                try:
+                    bot.delete_message(
+                        message.chat.id,
+                        status.message_id,
+                    )
+                except Exception:
+                    pass
+
+                print(
+                    f"FILM OK: #{film['rank']} {film['title']} + poster",
+                    flush=True,
+                )
+                return
+
+            except Exception as error:
+                print(
+                    "FILM POSTER DOWNLOAD ERROR:",
+                    type(error).__name__,
+                    str(error)[:250],
+                    flush=True,
+                )
+
+                # Если кешированная ссылка протухла — удаляем её.
+                cache_key = film_cover_cache_key(film)
+                with film_cover_cache_lock:
+                    if film_cover_cache.get(cache_key) == cover_url:
+                        film_cover_cache.pop(cache_key, None)
+                save_film_cover_cache()
+
+        # Если для очень редкого фильма Wikipedia не нашла постер,
+        # /film всё равно возвращает фильм, а не падает.
+        try:
+            bot.delete_message(
+                message.chat.id,
+                status.message_id,
+            )
+        except Exception:
+            pass
+
+        bot.reply_to(message, caption)
+
+        print(
+            f"FILM OK: #{film['rank']} {film['title']} (poster not found)",
+            flush=True,
+        )
+
+    threading.Thread(
+        target=task,
+        daemon=True,
+    ).start()
 
 
 # ==========================================================
