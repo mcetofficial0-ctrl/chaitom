@@ -1060,6 +1060,231 @@ def rand_wiki_command(message):
     ).start()
 
 
+
+# ==========================================================
+# CURSED WIKI IMAGE
+# ==========================================================
+
+CURSED_COMMONS_CATEGORIES = [
+    ("Category:Taxidermy", "таксидермия"),
+    ("Category:Grotesques", "гротески"),
+    ("Category:Medical illustrations", "медицинские иллюстрации"),
+    ("Category:Anatomical illustrations", "анатомические иллюстрации"),
+    ("Category:Plague doctors", "чумные доктора"),
+    ("Category:Ventriloquist dummies", "куклы чревовещателей"),
+    ("Category:Surrealist paintings", "сюрреализм"),
+    ("Category:Victorian post-mortem photography", "викторианские посмертные фото"),
+    ("Category:Masks", "маски"),
+    ("Category:Wax figures", "восковые фигуры"),
+]
+
+
+def get_commons_files_from_category(category_title, limit=20):
+    """
+    Возвращает список файлов из конкретной категории Wikimedia Commons.
+    """
+    data = wiki_request(
+        WIKIMEDIA_COMMONS_API_URL,
+        {
+            "action": "query",
+            "list": "categorymembers",
+            "cmtitle": category_title,
+            "cmnamespace": 6,
+            "cmlimit": limit,
+            "format": "json",
+            "formatversion": 2,
+            "origin": "*",
+        },
+        attempts=2,
+    )
+
+    members = data.get("query", {}).get("categorymembers", [])
+    return [
+        item.get("title")
+        for item in members
+        if isinstance(item, dict) and str(item.get("title", "")).startswith("File:")
+    ]
+
+
+def get_commons_file_info(file_titles):
+    """
+    Получает URL картинки и страницу файла на Commons для пачки File:-заголовков.
+    """
+    if not file_titles:
+        return []
+
+    data = wiki_request(
+        WIKIMEDIA_COMMONS_API_URL,
+        {
+            "action": "query",
+            "titles": "|".join(file_titles),
+            "prop": "imageinfo|info",
+            "iiprop": "url|mime",
+            "iiurlwidth": 1280,
+            "inprop": "url",
+            "format": "json",
+            "formatversion": 2,
+            "origin": "*",
+        },
+        attempts=2,
+    )
+
+    pages = data.get("query", {}).get("pages", [])
+    result = []
+
+    for page in pages:
+        info_list = page.get("imageinfo") or []
+        if not info_list:
+            continue
+
+        info = info_list[0]
+        mime = str(info.get("mime", "")).lower()
+        image_url = info.get("thumburl") or info.get("url")
+        file_page_url = str(page.get("fullurl", "")).strip()
+
+        if not isinstance(image_url, str) or not image_url.startswith("https://"):
+            continue
+        if not mime.startswith("image/"):
+            continue
+        if mime in {"image/svg+xml", "image/gif", "image/tiff"}:
+            continue
+
+        result.append({
+            "title": str(page.get("title", "")).removeprefix("File:").strip(),
+            "article_url": file_page_url,
+            "image_url": image_url,
+            "mime": mime,
+        })
+
+    return result
+
+
+def get_cursed_wiki_image():
+    """
+    Ищет "криповую/странную" картинку в Wikimedia Commons
+    по заранее подобранным категориям.
+
+    Если такие категории временно не отдали результат —
+    используем обычный random wiki fallback.
+    """
+    categories = CURSED_COMMONS_CATEGORIES[:]
+    random.shuffle(categories)
+
+    last_error = None
+
+    for category_title, category_label in categories:
+        try:
+            file_titles = get_commons_files_from_category(
+                category_title,
+                limit=20,
+            )
+
+            if not file_titles:
+                continue
+
+            random.shuffle(file_titles)
+
+            # Берём небольшую случайную пачку.
+            chunk = file_titles[:8]
+            items = get_commons_file_info(chunk)
+            random.shuffle(items)
+
+            for item in items:
+                try:
+                    item["image_bytes"] = download_wiki_image(
+                        item["image_url"]
+                    )
+                    item["source"] = f"Wikimedia Commons — {category_label}"
+                    return item
+                except Exception as download_error:
+                    last_error = download_error
+                    print(
+                        "CURSED_WIKI DOWNLOAD ERROR:",
+                        repr(download_error),
+                        flush=True,
+                    )
+
+        except Exception as e:
+            last_error = e
+            print(
+                "CURSED_WIKI CATEGORY ERROR:",
+                category_title,
+                repr(e),
+                flush=True,
+            )
+
+    # Если curated категории временно не дали результата,
+    # откатываемся к обычной случайной wiki-картинке.
+    fallback = get_random_wikipedia_image()
+    fallback["source"] = f"{fallback.get('source', 'Wikipedia')} (fallback)"
+    return fallback
+
+
+@bot.message_handler(commands=["cursed_wiki"])
+def cursed_wiki_command(message):
+    status = bot.reply_to(
+        message,
+        "👁️ Ищу проклятую картинку..."
+    )
+
+    def task():
+        try:
+            item = get_cursed_wiki_image()
+
+            caption = (
+                f"👁️ {item['title']}\n"
+                f"Источник: {item['source']}\n"
+                f"{item['article_url']}"
+            ).strip()
+
+            photo = io.BytesIO(item["image_bytes"])
+            photo.name = "cursed_wiki.jpg"
+
+            bot.send_photo(
+                message.chat.id,
+                photo,
+                caption=caption[:1024],
+                reply_to_message_id=message.message_id,
+            )
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    status.message_id,
+                )
+            except Exception:
+                pass
+
+            print(
+                "CURSED_WIKI OK:",
+                item["source"],
+                item["title"],
+                flush=True,
+            )
+
+        except Exception as e:
+            print(
+                "CURSED_WIKI ERROR:",
+                repr(e),
+                flush=True,
+            )
+
+            try:
+                bot.edit_message_text(
+                    f"❌ Не удалось получить cursed-картинку:\n"
+                    f"{str(e)[:600]}",
+                    message.chat.id,
+                    status.message_id,
+                )
+            except Exception:
+                pass
+
+    threading.Thread(
+        target=task,
+        daemon=True,
+    ).start()
+
+
 # ==========================================================
 # DRAW — FREE API (HUGGING FACE / FALLBACK)
 # ==========================================================
@@ -1600,6 +1825,8 @@ def start_command(message):
         "/music — сгенерировать скроббл\n"
         "/rym — случайный альбом из эзотерического топа RYM\n"
         "/film — случайный фильм из эзотерического топа RYM\n"
+        "/rand_wiki — случайная картинка из Википедии\n"
+        "/cursed_wiki — странная/криповая картинка из вики\n"
         "/history — статус памяти фраз\n"
         "/import_history — загрузить текстовый файл с фразами"
     )
@@ -1615,7 +1842,8 @@ def handle_message(message):
         for cmd in [
             ["draw", "gen"], ["edit"], ["video", "vid"],
             ["make_meme"], ["history", "save_history"],
-            ["import_history"], ["music"], ["rym"], ["film"]
+            ["import_history"], ["music"], ["rym"], ["film"],
+            ["rand_wiki"], ["cursed_wiki"]
         ]
     ):
         return
