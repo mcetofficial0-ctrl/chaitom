@@ -27,13 +27,17 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 GROQ_CHAT_MODEL = os.environ.get("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
-HF_TOKEN = os.environ.get("HF_TOKEN")  # Бесплатный токен от Hugging Face
+HF_TOKEN = os.environ.get("HF_TOKEN")  # старый резерв, можно не задавать
+STABILITY_API_KEY = os.environ.get("STABILITY_API_KEY", "").strip()
+STABILITY_DRAW_MODEL = os.environ.get("STABILITY_DRAW_MODEL", "sd3.5-flash").strip()
+STABILITY_EDIT_MODEL = os.environ.get("STABILITY_EDIT_MODEL", "sd3.5-medium").strip()
+STABILITY_EDIT_STRENGTH = float(os.environ.get("STABILITY_EDIT_STRENGTH", "0.45"))
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("Не задан TELEGRAM_TOKEN")
 if not GEMINI_API_KEY:
-    raise RuntimeError("Не задан GEMINI_API_KEY (нужен для изображений и видео)")
+    raise RuntimeError("Не задан GEMINI_API_KEY (нужен для видео и Gemini-функций)")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
@@ -243,42 +247,93 @@ def rym_command(message):
     bot.reply_to(message, fallback)
 
 # ==========================================================
-# DRAW — FREE API (HUGGING FACE / FALLBACK)
+# DRAW — STABILITY AI TRIAL (SD 3.5 FLASH)
 # ==========================================================
 
-def draw_generate_pollinations(prompt):
-    """Резервное бесплатное рисование (Nano Banana 2)"""
+STABILITY_SD3_URL = "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+
+
+def ensure_stability_key():
+    if not STABILITY_API_KEY:
+        raise RuntimeError(
+            "Не задан STABILITY_API_KEY. "
+            "Создай ключ на platform.stability.ai и добавь его в Render."
+        )
+
+
+def stability_error(response):
     try:
-        encoded_prompt = requests.utils.quote(prompt)
-        seed = random.randint(0, 999999)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={seed}"
-        
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        if 'image' not in response.headers.get('Content-Type', ''):
-            raise RuntimeError("Nano Banana GET API returned non-image data.")
-        return response.content
-    except Exception as e:
-        raise RuntimeError(f"Сбой Nano Banana fallback: {e}")
+        body = response.json()
+    except Exception:
+        body = response.text
 
-def draw_generate_hf(prompt):
-    """Генерация картинки через Hugging Face (FLUX.1-schnell)"""
-    if not HF_TOKEN:
-        raise RuntimeError("Не задан HF_TOKEN.")
+    if response.status_code in (402, 403):
+        return RuntimeError(
+            f"Stability AI отклонил запрос ({response.status_code}). "
+            f"Возможно, закончились пробные кредиты или ключ не имеет доступа. {body}"
+        )
 
-    payload = {"inputs": prompt}
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    
-    response = requests.post(
-        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
-        headers=headers,
-        json=payload,
-        timeout=60
+    return RuntimeError(
+        f"Stability AI error {response.status_code}: {body}"
     )
-    response.raise_for_status()
-    if 'image' not in response.headers.get('Content-Type', ''):
-         raise RuntimeError("HF draw API returned non-image data.")
+
+
+def draw_generate_stability(prompt):
+    """
+    Генерация через Stability AI SD 3.5 Flash.
+    По умолчанию модель задаётся STABILITY_DRAW_MODEL=sd3.5-flash.
+    """
+    ensure_stability_key()
+
+    response = requests.post(
+        STABILITY_SD3_URL,
+        headers={
+            "authorization": f"Bearer {STABILITY_API_KEY}",
+            "accept": "image/*",
+        },
+        files={"none": ("", b"")},
+        data={
+            "prompt": prompt,
+            "model": STABILITY_DRAW_MODEL,
+            "mode": "text-to-image",
+            "output_format": "png",
+            "negative_prompt": (
+                "low quality, blurry, distorted, deformed, "
+                "duplicate objects, watermark"
+            ),
+        },
+        timeout=120,
+    )
+
+    if response.status_code != 200:
+        raise stability_error(response)
+
+    if "image" not in response.headers.get("content-type", "").lower():
+        raise RuntimeError(
+            f"Stability AI вернул не изображение: "
+            f"{response.headers.get('content-type')}"
+        )
+
     return response.content
+
+
+# Бесплатный fallback для /draw, если пробные кредиты Stability закончились.
+def draw_generate_pollinations(prompt):
+    encoded_prompt = requests.utils.quote(prompt)
+    seed = random.randint(0, 999999)
+    url = (
+        f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+        f"?width=1024&height=1024&nologo=true&seed={seed}"
+    )
+
+    response = requests.get(url, timeout=45)
+    response.raise_for_status()
+
+    if "image" not in response.headers.get("Content-Type", ""):
+        raise RuntimeError("Pollinations вернул не изображение.")
+
+    return response.content
+
 
 @bot.message_handler(
     func=lambda m: is_command(m, ["draw", "gen"]),
@@ -286,83 +341,164 @@ def draw_generate_hf(prompt):
 )
 def draw_command(message):
     raw = message.caption if message.photo else message.text
-    prompt = re.sub(r"^/(draw|gen)(@\w+)?\s*", "", raw or "", flags=re.IGNORECASE).strip()
+    prompt = re.sub(
+        r"^/(draw|gen)(@\w+)?\s*",
+        "",
+        raw or "",
+        flags=re.IGNORECASE
+    ).strip()
 
     if not prompt:
         bot.reply_to(message, "Напиши, что нарисовать.")
         return
 
-    status = bot.reply_to(message, "🎨 Рисую через бесплатный API...")
+    status = bot.reply_to(
+        message,
+        f"🎨 Рисую через Stability AI ({STABILITY_DRAW_MODEL})..."
+    )
 
     def task():
         image_data = None
-        last_error = None
+        primary_error = None
+
+        enhanced_prompt = f"""
+Create a high-quality image exactly according to the user's request.
+The user may write in Russian; understand the request naturally.
+Preserve requested objects, characters, actions, visible text,
+composition, lighting, atmosphere and style.
+
+USER REQUEST:
+{prompt}
+""".strip()
 
         try:
-             translation_prompt = f"Translate the following Russian text to a detailed, highly aesthetic English image generation prompt: '{prompt}'. Reply ONLY with the English prompt."
-             translation_response = model.generate_content([translation_prompt])
-             english_prompt = translation_response.text.strip()
-        except Exception:
-             english_prompt = prompt
-
-        try:
-            image_data = draw_generate_hf(english_prompt)
-            print("DRAW OK: Hugging Face (FLUX)")
+            image_data = draw_generate_stability(enhanced_prompt)
+            print(f"DRAW OK: Stability AI {STABILITY_DRAW_MODEL}")
         except Exception as e:
-            print("DRAW HF ERROR:", repr(e))
-            print("DRAW: Запускаю резервный план (Polling Nations)...")
-            try:
-                image_data = draw_generate_pollinations(english_prompt)
-                print("DRAW OK: Nano Banana Fallback")
-            except Exception as backup_e:
-                 last_error = backup_e
-                 print("DRAW FINAL FALLBACK ERROR:", repr(backup_e))
+            primary_error = e
+            print("DRAW STABILITY ERROR:", repr(e))
 
-        if image_data:
+            # /draw продолжит работать даже после исчерпания trial.
             try:
-                bot.delete_message(message.chat.id, status.message_id)
+                image_data = draw_generate_pollinations(enhanced_prompt)
+                print("DRAW OK: Pollinations fallback")
+            except Exception as fallback_error:
+                print("DRAW FALLBACK ERROR:", repr(fallback_error))
+
+        if not image_data:
+            try:
+                bot.edit_message_text(
+                    f"❌ Ошибка генерации:\n{str(primary_error)[:700]}",
+                    message.chat.id,
+                    status.message_id
+                )
             except Exception:
                 pass
-            file = io.BytesIO(image_data)
-            file.name = "generated.png"
-            bot.send_photo(message.chat.id, file, reply_to_message_id=message.message_id)
-        else:
-             try:
-                 bot.edit_message_text(f"❌ Оба мольберта сломались:\n{str(last_error)[:500]}", message.chat.id, status.message_id)
-             except Exception: pass
+            return
+
+        try:
+            bot.delete_message(message.chat.id, status.message_id)
+        except Exception:
+            pass
+
+        file = io.BytesIO(image_data)
+        file.name = "generated.png"
+
+        bot.send_photo(
+            message.chat.id,
+            file,
+            reply_to_message_id=message.message_id
+        )
 
     threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
-# EDIT IMAGE — FREE INSTRUCTPIX2PIX (HUGGING FACE) + FALLBACK
+# EDIT IMAGE — STABILITY AI TRIAL (SD 3.5 IMAGE-TO-IMAGE)
 # ==========================================================
 
-def edit_image_hf(image_bytes, user_prompt):
-    """Редактирование картинки через Hugging Face (InstructPix2Pix)"""
-    if not HF_TOKEN:
-        raise RuntimeError("Не задан HF_TOKEN.")
+def prepare_stability_image(image_bytes):
+    """
+    Нормализуем Telegram-фото в PNG.
+    Stability принимает jpeg/png/webp.
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    base64_image = base64.b64encode(image_bytes).decode("utf-8")
-    payload = {
-        "inputs": user_prompt,
-        "image": base64_image,
-        "num_inference_steps": 25,
-        "image_guidance_scale": 1.5,
-        "guidance_scale": 7.5
-    }
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    
+    # Не даём случайно отправить слишком гигантскую картинку.
+    max_side = 2048
+    if max(img.size) > max_side:
+        scale = max_side / max(img.size)
+        img = img.resize(
+            (
+                max(64, int(img.width * scale)),
+                max(64, int(img.height * scale)),
+            ),
+            Image.LANCZOS
+        )
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out.getvalue()
+
+
+def edit_image_stability(image_bytes, user_prompt):
+    """
+    Prompt-based image-to-image через Stability AI SD 3.5.
+    STABILITY_EDIT_STRENGTH:
+      0.0 = почти исходник
+      1.0 = почти полная перерисовка
+    """
+    ensure_stability_key()
+
+    prepared = prepare_stability_image(image_bytes)
+
+    prompt = f"""
+Edit the provided image according to the user's instruction.
+
+Keep the same subject identity, composition, camera angle, lighting,
+background and unaffected details unless the user explicitly asks to
+change them. Make only the requested change and keep the result coherent.
+
+USER REQUEST:
+{user_prompt}
+""".strip()
+
     response = requests.post(
-        "https://api-inference.huggingface.co/models/timbrooks/instruct-pix2pix",
-        headers=headers,
-        json=payload,
-        timeout=90
+        STABILITY_SD3_URL,
+        headers={
+            "authorization": f"Bearer {STABILITY_API_KEY}",
+            "accept": "image/*",
+        },
+        files={
+            "image": ("input.png", prepared, "image/png"),
+        },
+        data={
+            "prompt": prompt,
+            "model": STABILITY_EDIT_MODEL,
+            "mode": "image-to-image",
+            "strength": str(
+                max(0.0, min(1.0, STABILITY_EDIT_STRENGTH))
+            ),
+            "output_format": "png",
+            "negative_prompt": (
+                "low quality, blurry, distorted, deformed, "
+                "duplicate objects, watermark"
+            ),
+        },
+        timeout=150,
     )
-    
-    response.raise_for_status()
-    if 'image' not in response.headers.get('Content-Type', ''):
-         raise RuntimeError("HF edit API returned non-image data.")
+
+    if response.status_code != 200:
+        raise stability_error(response)
+
+    if "image" not in response.headers.get("content-type", "").lower():
+        raise RuntimeError(
+            f"Stability AI вернул не изображение: "
+            f"{response.headers.get('content-type')}"
+        )
+
     return response.content
+
 
 @bot.message_handler(
     func=lambda m: is_command(m, ["edit"]),
@@ -376,83 +512,70 @@ def edit_command(message):
             message,
             "Прикрепи фото к /edit или сделай reply на фото.\n\n"
             "Пример:\n"
-            "/edit добавь человеку очки"
+            "/edit убери нож из руки"
         )
         return
 
     raw = message.caption if message.photo else message.text
-    prompt = re.sub(r"^/edit(@\w+)?\s*", "", raw or "", flags=re.IGNORECASE).strip()
+    prompt = re.sub(
+        r"^/edit(@\w+)?\s*",
+        "",
+        raw or "",
+        flags=re.IGNORECASE
+    ).strip()
 
     if not prompt:
         bot.reply_to(message, "Напиши, что изменить на фото.")
         return
 
-    status = bot.reply_to(message, "🎨 Редактирую через бесплатный API...")
+    status = bot.reply_to(
+        message,
+        f"🖼️ Редактирую через Stability AI ({STABILITY_EDIT_MODEL})..."
+    )
 
     def task():
         try:
             info = bot.get_file(target.photo[-1].file_id)
             image_bytes = bot.download_file(info.file_path)
-            edited_image_data = None
-            last_error = None
+
+            edited_image_data = edit_image_stability(
+                image_bytes,
+                prompt
+            )
 
             try:
-                 translation_prompt = f"Translate the following Russian image editing instruction to a detailed English prompt: '{prompt}'. Reply ONLY with the English prompt."
-                 translation_response = model.generate_content([translation_prompt])
-                 english_prompt = translation_response.text.strip()
+                bot.delete_message(
+                    message.chat.id,
+                    status.message_id
+                )
             except Exception:
-                 english_prompt = prompt
+                pass
+
+            file = io.BytesIO(edited_image_data)
+            file.name = "edited.png"
+
+            bot.send_photo(
+                message.chat.id,
+                file,
+                reply_to_message_id=message.message_id
+            )
+
+            print(
+                f"EDIT OK: Stability AI {STABILITY_EDIT_MODEL}, "
+                f"strength={STABILITY_EDIT_STRENGTH}"
+            )
+
+        except Exception as e:
+            print("EDIT STABILITY ERROR:", repr(e))
 
             try:
-                edited_image_data = edit_image_hf(image_bytes, english_prompt)
-                print("EDIT OK: Hugging Face (InstructPix2Pix)")
-            except Exception as e:
-                print("EDIT HF I2I ERROR:", repr(e))
-                print("EDIT: Запускаю резервный план (Vision -> Generation)...")
-                try:
-                    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                    vision_analysis_prompt = (
-                        "Analyze this image in extreme detail. Provide a comprehensive, highly detailed English description of every element, "
-                        "including the subject, setting, lighting, composition, colors, and style."
-                    )
-                    analysis_response = model.generate_content([vision_analysis_prompt, img])
-                    original_description = analysis_response.text.strip()
-
-                    prompt_engineering_instructions = (
-                        f"Based on the following detailed description of an original image:\n\n{original_description}\n\n"
-                        f"Create a NEW, extremely detailed English image generation prompt that depicts the exact same scene, "
-                        f"but with the following transformation applied: '{english_prompt}'. "
-                        "Maintain the original composition, style, and identity as much as possible."
-                    )
-                    prompt_response = model.generate_content([prompt_engineering_instructions])
-                    final_english_prompt = prompt_response.text.strip()
-
-                    print("EDIT: Generating new image via free prompt...")
-                    edited_image_data = draw_generate_pollinations(final_english_prompt)
-                    print("EDIT OK: Vision -> Generation Fallback")
-
-                except Exception as e_regen:
-                    last_error = e_regen
-                    print("EDIT FINAL FALLBACK ERROR:", repr(e_regen))
-
-            if edited_image_data:
-                try:
-                    bot.delete_message(message.chat.id, status.message_id)
-                except Exception:
-                    pass
-                file = io.BytesIO(edited_image_data)
-                file.name = "edited.png"
-                bot.send_photo(message.chat.id, file, reply_to_message_id=message.message_id)
-            else:
-                 try:
-                     bot.edit_message_text(f"❌ Оба метода редактирования сломались:\n{str(last_error)[:500]}", message.chat.id, status.message_id)
-                 except Exception: pass
-
-        except Exception as e_download:
-            print("EDIT DOWNLOAD ERROR:", repr(e_download))
-            try:
-                bot.edit_message_text(f"❌ Ошибка загрузки фото: {e_download}", message.chat.id, status_msg.message_id)
-            except Exception: pass
+                bot.edit_message_text(
+                    f"❌ Ошибка редактирования:\n{str(e)[:700]}",
+                    message.chat.id,
+                    status.message_id
+                )
+            except Exception:
+                pass
 
     threading.Thread(target=task, daemon=True).start()
 
