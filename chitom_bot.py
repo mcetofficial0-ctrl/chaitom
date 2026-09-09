@@ -697,7 +697,10 @@ def film_command(message):
 # RANDOM WIKIPEDIA IMAGE — RATE LIMIT FIX
 # ==========================================================
 
-WIKIPEDIA_API_URL = "https://ru.wikipedia.org/w/api.php"
+WIKIPEDIA_API_URLS = [
+    ("https://ru.wikipedia.org/w/api.php", "Русская Wikipedia"),
+    ("https://en.wikipedia.org/w/api.php", "English Wikipedia"),
+]
 WIKIMEDIA_COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
 
 WIKI_HEADERS = {
@@ -766,13 +769,13 @@ def wiki_request(url, params, attempts=3):
     )
 
 
-def get_random_wikipedia_page_image():
+def get_random_wikipedia_page_image(api_url, source_name):
     """
-    Вместо 12 отдельных random-запросов получаем до 10 случайных
-    статей ЗА ОДИН API-запрос и выбираем первую подходящую картинку.
+    Получает до 10 случайных статей одной конкретной Википедии
+    за один запрос и выбирает первую статью с подходящей картинкой.
     """
     data = wiki_request(
-        WIKIPEDIA_API_URL,
+        api_url,
         {
             "action": "query",
             "generator": "random",
@@ -791,7 +794,6 @@ def get_random_wikipedia_page_image():
     )
 
     pages = data.get("query", {}).get("pages", [])
-
     random.shuffle(pages)
 
     for page in pages:
@@ -811,15 +813,14 @@ def get_random_wikipedia_page_image():
         if not image_url.startswith("https://"):
             continue
 
-        # Telegram не умеет SVG как обычное фото.
         if lower_url.endswith(".svg") or ".svg?" in lower_url:
             continue
 
         return {
-            "title": title or "Wikipedia",
+            "title": title or source_name,
             "article_url": article_url,
             "image_url": image_url,
-            "source": "Wikipedia",
+            "source": source_name,
         }
 
     return None
@@ -937,28 +938,40 @@ def download_wiki_image(image_url):
 
 def get_random_wikipedia_image():
     """
-    Схема без бесконечного спама API:
-      1. один batch-запрос к русской Wikipedia;
-      2. при неудаче — один batch-запрос к Wikimedia Commons;
-      3. скачивание только одной выбранной картинки.
+    Схема:
+      1. случайно выбираем, с какой Википедии начать — RU или EN;
+      2. пробуем вторую Википедию;
+      3. если обе не дали картинку — Wikimedia Commons;
+      4. скачиваем только одну выбранную картинку.
+
+    Так /rand_wiki реально берёт изображения и с русской,
+    и с английской Википедии.
     """
     last_error = None
 
-    try:
-        item = get_random_wikipedia_page_image()
-        if item:
-            item["image_bytes"] = download_wiki_image(
-                item["image_url"]
-            )
-            return item
+    wiki_sources = WIKIPEDIA_API_URLS[:]
+    random.shuffle(wiki_sources)
 
-    except Exception as e:
-        last_error = e
-        print(
-            "RAND_WIKI WIKIPEDIA ERROR:",
-            repr(e),
-            flush=True,
-        )
+    for api_url, source_name in wiki_sources:
+        try:
+            item = get_random_wikipedia_page_image(
+                api_url,
+                source_name,
+            )
+
+            if item:
+                item["image_bytes"] = download_wiki_image(
+                    item["image_url"]
+                )
+                return item
+
+        except Exception as e:
+            last_error = e
+            print(
+                f"RAND_WIKI {source_name} ERROR:",
+                repr(e),
+                flush=True,
+            )
 
     try:
         item = get_random_commons_image()
