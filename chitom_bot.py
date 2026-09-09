@@ -7,7 +7,9 @@ import random
 import json
 import threading
 import requests
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urljoin
 
 import telebot
 import google.generativeai as genai
@@ -111,21 +113,85 @@ def load_rym_albums():
 rym_albums = load_rym_albums()
 
 def load_rym_films():
-    """Загружает локальный снимок эзотерического чарта фильмов RYM."""
+    """Загружает фильмы непосредственно из указанного чарта RYM."""
+    local_films = []
     try:
         with open(RYM_FILMS_FILE, "r", encoding="utf-8") as f:
             films = json.load(f)
-        valid_films = [
+        local_films = [
             film for film in films
             if isinstance(film, dict)
             and film.get("title")
             and film.get("url", "").startswith("https://rateyourmusic.com/release/film/")
         ]
-        print(f"Загружено {len(valid_films)} фильмов из чарта RYM.")
-        return valid_films
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print("Ошибка загрузки каталога фильмов RYM:", e)
-        return []
+
+    try:
+        response = requests.get(
+            RYM_FILM_CHART_URL,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; chaitom_bot/1.0)"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        chart_films = parse_rym_film_chart(response.text)
+        if chart_films:
+            metadata = {film["url"]: film for film in local_films}
+            for film in chart_films:
+                film.update({
+                    key: value
+                    for key, value in metadata.get(film["url"], {}).items()
+                    if key not in film
+                })
+            print(f"Загружено {len(chart_films)} фильмов из чарта RYM.")
+            return chart_films
+        print("В ответе RYM не найдено фильмов, использую локальный каталог.")
+    except requests.RequestException as e:
+        print("Ошибка загрузки чарта фильмов RYM:", e)
+
+    print(f"Загружено {len(local_films)} фильмов из локального каталога RYM.")
+    return local_films
+
+
+class _RYMFilmChartParser(HTMLParser):
+    """Извлекает ссылки на фильмы, не строя slug по названию."""
+
+    def __init__(self):
+        super().__init__()
+        self.films = []
+        self._href = None
+        self._text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "a":
+            return
+        href = dict(attrs).get("href", "")
+        if "/release/film/" in href:
+            self._href = urljoin("https://rateyourmusic.com", href)
+            self._text = []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag != "a" or self._href is None:
+            return
+        title = " ".join("".join(self._text).split())
+        if title and self._href not in {film["url"] for film in self.films}:
+            self.films.append({
+                "rank": len(self.films) + 1,
+                "title": title,
+                "url": self._href,
+            })
+        self._href = None
+        self._text = []
+
+
+def parse_rym_film_chart(html):
+    parser = _RYMFilmChartParser()
+    parser.feed(html)
+    return parser.films
 
 rym_films = load_rym_films()
 
