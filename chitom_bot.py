@@ -28,17 +28,20 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 GROQ_CHAT_MODEL = os.environ.get("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
 HF_TOKEN = os.environ.get("HF_TOKEN")  # Бесплатный токен от Hugging Face
+HF_IMAGE_API = os.environ.get(
+    "HF_IMAGE_API", "https://router.huggingface.co/hf-inference/models"
+).rstrip("/")
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("Не задан TELEGRAM_TOKEN")
-if not GEMINI_API_KEY:
-    raise RuntimeError("Не задан GEMINI_API_KEY (нужен для изображений и видео)")
-
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
-genai.configure(api_key=GEMINI_API_KEY)
-image_client = new_genai.Client(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    image_client = new_genai.Client(api_key=GEMINI_API_KEY)
+else:
+    image_client = None
 chat_client = (
     OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1",
            timeout=30.0, max_retries=0)
@@ -52,9 +55,14 @@ chat_client = (
 HISTORY_FILE = "chat_history.json"
 HISTORY_LIMIT = 1000
 RYM_ALBUMS_FILE = os.path.join(os.path.dirname(__file__), "rym_albums.json")
+RYM_FILMS_FILE = os.path.join(os.path.dirname(__file__), "rym_films.json")
 RYM_CHART_URL = (
     "https://rateyourmusic.com/charts/esoteric/album/all-time/"
     "g:%2dclassical%2dmusic/separate:live,archival,soundtrack/"
+)
+RYM_FILM_CHART_URL = (
+    "https://rateyourmusic.com/charts/esoteric/film/all-time/"
+    "separate:live,archival,soundtrack/"
 )
 
 def load_chat_history():
@@ -102,6 +110,25 @@ def load_rym_albums():
 
 rym_albums = load_rym_albums()
 
+def load_rym_films():
+    """Загружает локальный снимок эзотерического чарта фильмов RYM."""
+    try:
+        with open(RYM_FILMS_FILE, "r", encoding="utf-8") as f:
+            films = json.load(f)
+        valid_films = [
+            film for film in films
+            if isinstance(film, dict)
+            and film.get("title")
+            and film.get("url", "").startswith("https://rateyourmusic.com/release/film/")
+        ]
+        print(f"Загружено {len(valid_films)} фильмов из чарта RYM.")
+        return valid_films
+    except Exception as e:
+        print("Ошибка загрузки каталога фильмов RYM:", e)
+        return []
+
+rym_films = load_rym_films()
+
 # ==========================================================
 # AI MODELS
 # ==========================================================
@@ -132,7 +159,7 @@ model = genai.GenerativeModel(
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ],
-)
+) if GEMINI_API_KEY else None
 
 # ==========================================================
 # HELPERS
@@ -242,6 +269,62 @@ def rym_command(message):
         print("RYM FINAL ERROR:", repr(last_error))
     bot.reply_to(message, fallback)
 
+@bot.message_handler(commands=["film"])
+def film_command(message):
+    if not rym_films:
+        bot.reply_to(message, f"Каталог фильмов RYM пока не загрузился. Сам чарт: {RYM_FILM_CHART_URL}")
+        return
+
+    candidates = random.sample(rym_films, min(6, len(rym_films)))
+    selected = candidates[0]
+    last_error = None
+
+    for film in candidates:
+        if not film.get("cover"):
+            continue
+
+        year = f" ({film['year']})" if film.get("year") else ""
+        caption = (
+            f"🎬 RYM film #{film.get('rank', '?')}\n"
+            f"{film['title']}{year}\n"
+            f"Режиссёр: {film.get('director', 'Unknown Director')}\n\n"
+            f"{film['url']}"
+        )
+
+        try:
+            cover = io.BytesIO(download_rym_cover(film["cover"]))
+            cover.name = "rym_film.jpg"
+            bot.send_photo(
+                message.chat.id,
+                cover,
+                caption=caption,
+                reply_to_message_id=message.message_id,
+            )
+            return
+        except Exception as e:
+            last_error = e
+            print("RYM FILM COVER ERROR:", repr(e))
+
+            try:
+                bot.send_photo(
+                    message.chat.id,
+                    film["cover"],
+                    caption=caption,
+                    reply_to_message_id=message.message_id,
+                )
+                return
+            except Exception as telegram_error:
+                last_error = telegram_error
+                print("RYM TELEGRAM FILM COVER ERROR:", repr(telegram_error))
+
+    fallback = (
+        f"🎬 RYM film #{selected.get('rank', '?')}\n"
+        f"{selected['title']}\n\n{selected['url']}"
+    )
+    if last_error:
+        print("RYM FILM FINAL ERROR:", repr(last_error))
+    bot.reply_to(message, fallback)
+
 # ==========================================================
 # DRAW — FREE API (HUGGING FACE / FALLBACK)
 # ==========================================================
@@ -270,11 +353,13 @@ def draw_generate_hf(prompt):
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
     response = requests.post(
-        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+        f"{HF_IMAGE_API}/black-forest-labs/FLUX.1-schnell",
         headers=headers,
         json=payload,
         timeout=60
     )
+    if response.status_code == 503:
+        raise RuntimeError("Hugging Face загружает модель, попробуй через минуту.")
     response.raise_for_status()
     if 'image' not in response.headers.get('Content-Type', ''):
          raise RuntimeError("HF draw API returned non-image data.")
@@ -298,12 +383,7 @@ def draw_command(message):
         image_data = None
         last_error = None
 
-        try:
-             translation_prompt = f"Translate the following Russian text to a detailed, highly aesthetic English image generation prompt: '{prompt}'. Reply ONLY with the English prompt."
-             translation_response = model.generate_content([translation_prompt])
-             english_prompt = translation_response.text.strip()
-        except Exception:
-             english_prompt = prompt
+        english_prompt = prompt
 
         try:
             image_data = draw_generate_hf(english_prompt)
@@ -353,12 +433,13 @@ def edit_image_hf(image_bytes, user_prompt):
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
     response = requests.post(
-        "https://api-inference.huggingface.co/models/timbrooks/instruct-pix2pix",
+        f"{HF_IMAGE_API}/timbrooks/instruct-pix2pix",
         headers=headers,
         json=payload,
         timeout=90
     )
-    
+    if response.status_code == 503:
+        raise RuntimeError("Hugging Face загружает модель, попробуй через минуту.")
     response.raise_for_status()
     if 'image' not in response.headers.get('Content-Type', ''):
          raise RuntimeError("HF edit API returned non-image data.")
@@ -396,44 +477,28 @@ def edit_command(message):
             edited_image_data = None
             last_error = None
 
-            try:
-                 translation_prompt = f"Translate the following Russian image editing instruction to a detailed English prompt: '{prompt}'. Reply ONLY with the English prompt."
-                 translation_response = model.generate_content([translation_prompt])
-                 english_prompt = translation_response.text.strip()
-            except Exception:
-                 english_prompt = prompt
+            english_prompt = prompt
 
             try:
                 edited_image_data = edit_image_hf(image_bytes, english_prompt)
                 print("EDIT OK: Hugging Face (InstructPix2Pix)")
             except Exception as e:
                 print("EDIT HF I2I ERROR:", repr(e))
-                print("EDIT: Запускаю резервный план (Vision -> Generation)...")
+                print("EDIT: Запускаю бесплатный резервный план без Gemini...")
                 try:
-                    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                    vision_analysis_prompt = (
-                        "Analyze this image in extreme detail. Provide a comprehensive, highly detailed English description of every element, "
-                        "including the subject, setting, lighting, composition, colors, and style."
+                    fallback_prompt = (
+                        "Create an image matching this requested transformation as closely as possible: "
+                        f"{english_prompt}. Keep the result photorealistic and high quality."
                     )
-                    analysis_response = model.generate_content([vision_analysis_prompt, img])
-                    original_description = analysis_response.text.strip()
-
-                    prompt_engineering_instructions = (
-                        f"Based on the following detailed description of an original image:\n\n{original_description}\n\n"
-                        f"Create a NEW, extremely detailed English image generation prompt that depicts the exact same scene, "
-                        f"but with the following transformation applied: '{english_prompt}'. "
-                        "Maintain the original composition, style, and identity as much as possible."
-                    )
-                    prompt_response = model.generate_content([prompt_engineering_instructions])
-                    final_english_prompt = prompt_response.text.strip()
-
-                    print("EDIT: Generating new image via free prompt...")
-                    edited_image_data = draw_generate_pollinations(final_english_prompt)
-                    print("EDIT OK: Vision -> Generation Fallback")
+                    edited_image_data = draw_generate_pollinations(fallback_prompt)
+                    print("EDIT OK: Pollinations prompt fallback")
 
                 except Exception as e_regen:
                     last_error = e_regen
                     print("EDIT FINAL FALLBACK ERROR:", repr(e_regen))
+
+                if not edited_image_data:
+                    last_error = e
 
             if edited_image_data:
                 try:
@@ -451,7 +516,7 @@ def edit_command(message):
         except Exception as e_download:
             print("EDIT DOWNLOAD ERROR:", repr(e_download))
             try:
-                bot.edit_message_text(f"❌ Ошибка загрузки фото: {e_download}", message.chat.id, status_msg.message_id)
+                bot.edit_message_text(f"❌ Ошибка загрузки фото: {e_download}", message.chat.id, status.message_id)
             except Exception: pass
 
     threading.Thread(target=task, daemon=True).start()
@@ -514,6 +579,9 @@ def video_command(message):
 
     if not prompt:
         bot.reply_to(message, "Напиши, что снять. Например: /video кот бежит по лесу")
+        return
+    if image_client is None:
+        bot.reply_to(message, "Для видео администратору нужно настроить GEMINI_API_KEY.")
         return
 
     try:
@@ -796,6 +864,7 @@ def start_command(message):
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
         "/rym — случайный альбом из эзотерического топа RYM\n"
+        "/film — случайный фильм из эзотерического топа RYM\n"
         "/history — статус памяти фраз\n"
         "/import_history — загрузить текстовый файл с фразами"
     )
@@ -811,7 +880,7 @@ def handle_message(message):
         for cmd in [
             ["draw", "gen"], ["edit"], ["video", "vid"],
             ["make_meme"], ["history", "save_history"],
-            ["import_history"], ["music"], ["rym"]
+            ["import_history"], ["music"], ["rym"], ["film"]
         ]
     ):
         return
