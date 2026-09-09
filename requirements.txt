@@ -3,7 +3,7 @@ numpy
 pyTelegramBotAPI
 google-generativeai>=0.7.2
 pillow
-openai
+openai>=1.63.0
 google-genai
 huggingface_hub
 requests

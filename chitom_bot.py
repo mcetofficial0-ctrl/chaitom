@@ -13,6 +13,7 @@ import telebot
 import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
+from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -23,18 +24,26 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5.6-luna")
+OPENAI_TRANSCRIBE_MODEL = os.environ.get(
+    "OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"
+)
 HF_TOKEN = os.environ.get("HF_TOKEN")  # Бесплатный токен от Hugging Face
 BOT_USERNAME = "@chaitom_bot"
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("Не задан TELEGRAM_TOKEN")
 if not GEMINI_API_KEY:
-    raise RuntimeError("Не задан GEMINI_API_KEY (нужен для чата и зрения)")
+    raise RuntimeError("Не задан GEMINI_API_KEY (нужен для изображений и видео)")
+if not OPENAI_API_KEY:
+    raise RuntimeError("Не задан OPENAI_API_KEY (нужен для ChatGPT)")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
 genai.configure(api_key=GEMINI_API_KEY)
 image_client = new_genai.Client(api_key=GEMINI_API_KEY)
+chat_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ==========================================================
 # PERSISTENT HISTORY (ПАМЯТЬ БОТА)
@@ -70,7 +79,7 @@ dialog_context = {}
 CONTEXT_LIMIT = 15
 
 # ==========================================================
-# TEXT AI (БЕСПЛАТНАЯ МОДЕЛЬ ДЛЯ ЧАТА И ЗРЕНИЯ)
+# AI MODELS
 # ==========================================================
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот".
@@ -98,6 +107,41 @@ model = genai.GenerativeModel(
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ],
 )
+
+def chatgpt_reply(prompt, image_bytes=None, image_mime="image/jpeg"):
+    """Ответ через модель ChatGPT; при необходимости добавляет фото."""
+    content = [{"type": "input_text", "text": prompt}]
+    if image_bytes:
+        image_base64 = base64.b64encode(image_bytes).decode("ascii")
+        content.append({
+            "type": "input_image",
+            "image_url": f"data:{image_mime};base64,{image_base64}",
+        })
+
+    response = chat_client.responses.create(
+        model=OPENAI_CHAT_MODEL,
+        instructions=SYSTEM_PROMPT,
+        input=[{"role": "user", "content": content}],
+        max_output_tokens=300,
+        store=False,
+    )
+    reply = response.output_text.strip()
+    if not reply:
+        raise RuntimeError("ChatGPT вернул пустой ответ")
+    return reply.replace("*", "")
+
+def chatgpt_transcribe(audio_bytes, file_name):
+    """Распознаёт голосовое сообщение перед передачей диалога в ChatGPT."""
+    audio_file = io.BytesIO(audio_bytes)
+    audio_file.name = file_name
+    transcript = chat_client.audio.transcriptions.create(
+        model=OPENAI_TRANSCRIBE_MODEL,
+        file=audio_file,
+    )
+    text = transcript.text.strip()
+    if not text:
+        raise RuntimeError("Не удалось распознать голосовое сообщение")
+    return text
 
 # ==========================================================
 # HELPERS
@@ -740,28 +784,27 @@ def handle_message(message):
 
     try:
         history = "\n".join(dialog_context[chat_id])
-        prompt = (
-            f"Последние сообщения:\n{history}\n\n"
-            f"Ответь на последнее сообщение {user_name}."
-        )
-        contents = [prompt]
+        image_bytes = None
 
         if message.photo:
             info = bot.get_file(message.photo[-1].file_id)
-            data = bot.download_file(info.file_path)
-            contents.append(Image.open(io.BytesIO(data)).convert("RGB"))
+            image_bytes = bot.download_file(info.file_path)
 
         elif message.voice or message.audio:
             media = message.voice if message.voice else message.audio
             info = bot.get_file(media.file_id)
             data = bot.download_file(info.file_path)
-            contents.append({
-                "mime_type": "audio/ogg" if message.voice else "audio/mpeg",
-                "data": data
-            })
+            file_name = "voice.ogg" if message.voice else (media.file_name or "audio.mp3")
+            transcript = chatgpt_transcribe(data, file_name)
+            dialog_context[chat_id][-1] = f"{user_name}: {transcript}"
+            history = "\n".join(dialog_context[chat_id])
 
-        response = model.generate_content(contents)
-        reply = response.text.replace("*", "")
+        prompt = (
+            f"Последние сообщения:\n{history}\n\n"
+            f"Ответь на последнее сообщение {user_name}."
+        )
+
+        reply = chatgpt_reply(prompt, image_bytes=image_bytes)
         bot.reply_to(message, reply)
         dialog_context[chat_id].append(f"читом бот: {reply}")
 
