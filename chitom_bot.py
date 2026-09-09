@@ -694,112 +694,290 @@ def film_command(message):
 
 
 # ==========================================================
-# RANDOM WIKIPEDIA IMAGE
+# RANDOM WIKIPEDIA IMAGE — RATE LIMIT FIX
 # ==========================================================
 
 WIKIPEDIA_API_URL = "https://ru.wikipedia.org/w/api.php"
+WIKIMEDIA_COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
+
+WIKI_HEADERS = {
+    "User-Agent": (
+        "ChaitomBot/1.0 "
+        "(Telegram bot; random Wikipedia image; "
+        "https://t.me/chaitom_bot)"
+    ),
+    "Accept": "application/json",
+}
 
 
-def get_random_wikipedia_image():
+def wiki_request(url, params, attempts=3):
     """
-    Берёт случайную статью из русской Википедии и пытается получить
-    её основное изображение. Никакого локального списка нет.
-
-    Если статья без картинки — пробует следующую.
+    Один аккуратный MediaWiki-запрос с обработкой 429.
+    В старой версии бот мог сделать до 12 быстрых запросов подряд,
+    из-за чего Wikimedia начинала отвечать Too Many Requests.
     """
-    headers = {
-        "User-Agent": "ChaitomBot/1.0 (Telegram random Wikipedia image)"
-    }
-
     last_error = None
 
-    for attempt in range(12):
+    for attempt in range(attempts):
         try:
             response = requests.get(
-                WIKIPEDIA_API_URL,
-                params={
-                    "action": "query",
-                    "generator": "random",
-                    "grnnamespace": 0,
-                    "grnlimit": 1,
-                    "prop": "pageimages|info",
-                    "piprop": "original|thumbnail",
-                    "pithumbsize": 1280,
-                    "inprop": "url",
-                    "redirects": 1,
-                    "format": "json",
-                    "formatversion": 2,
-                },
-                headers=headers,
-                timeout=(4, 10),
+                url,
+                params=params,
+                headers=WIKI_HEADERS,
+                timeout=(5, 15),
             )
+
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+
+                try:
+                    delay = int(retry_after)
+                except (TypeError, ValueError):
+                    delay = 3 + attempt * 3
+
+                delay = max(2, min(delay, 15))
+
+                print(
+                    f"WIKI 429: retry after {delay}s",
+                    flush=True,
+                )
+
+                if attempt < attempts - 1:
+                    time.sleep(delay)
+                    continue
+
             response.raise_for_status()
-
-            data = response.json()
-            pages = data.get("query", {}).get("pages", [])
-
-            if not pages:
-                continue
-
-            page = pages[0]
-
-            title = str(page.get("title", "")).strip()
-            article_url = str(page.get("fullurl", "")).strip()
-
-            image_url = (
-                page.get("original", {}).get("source")
-                or page.get("thumbnail", {}).get("source")
-            )
-
-            if not image_url or not image_url.startswith("https://"):
-                continue
-
-            # Telegram send_photo не умеет SVG.
-            lower_url = image_url.lower()
-            if lower_url.endswith(".svg") or ".svg?" in lower_url:
-                continue
-
-            # Скачиваем сами, чтобы сразу проверить, что это реальное изображение.
-            image_response = requests.get(
-                image_url,
-                headers=headers,
-                timeout=(4, 12),
-            )
-            image_response.raise_for_status()
-
-            content_type = image_response.headers.get(
-                "Content-Type",
-                ""
-            ).lower()
-
-            if "image" not in content_type:
-                continue
-
-            image_bytes = image_response.content
-
-            if not image_bytes:
-                continue
-
-            if len(image_bytes) > 10 * 1024 * 1024:
-                continue
-
-            return {
-                "title": title or "Wikipedia",
-                "article_url": article_url,
-                "image_url": image_url,
-                "image_bytes": image_bytes,
-            }
+            return response.json()
 
         except Exception as e:
             last_error = e
+
             print(
-                f"RAND_WIKI attempt {attempt + 1}/12 ERROR:",
+                f"WIKI REQUEST ERROR {attempt + 1}/{attempts}:",
                 repr(e),
                 flush=True,
             )
 
+            if attempt < attempts - 1:
+                time.sleep(2 + attempt * 2)
+
     raise RuntimeError(
-        f"Не удалось найти случайную картинку в Wikipedia. "
+        f"Wikimedia API недоступен: {last_error}"
+    )
+
+
+def get_random_wikipedia_page_image():
+    """
+    Вместо 12 отдельных random-запросов получаем до 10 случайных
+    статей ЗА ОДИН API-запрос и выбираем первую подходящую картинку.
+    """
+    data = wiki_request(
+        WIKIPEDIA_API_URL,
+        {
+            "action": "query",
+            "generator": "random",
+            "grnnamespace": 0,
+            "grnlimit": 10,
+            "prop": "pageimages|info",
+            "piprop": "original|thumbnail",
+            "pithumbsize": 1280,
+            "inprop": "url",
+            "redirects": 1,
+            "format": "json",
+            "formatversion": 2,
+            "origin": "*",
+        },
+        attempts=2,
+    )
+
+    pages = data.get("query", {}).get("pages", [])
+
+    random.shuffle(pages)
+
+    for page in pages:
+        title = str(page.get("title", "")).strip()
+        article_url = str(page.get("fullurl", "")).strip()
+
+        image_url = (
+            page.get("original", {}).get("source")
+            or page.get("thumbnail", {}).get("source")
+        )
+
+        if not isinstance(image_url, str):
+            continue
+
+        lower_url = image_url.lower()
+
+        if not image_url.startswith("https://"):
+            continue
+
+        # Telegram не умеет SVG как обычное фото.
+        if lower_url.endswith(".svg") or ".svg?" in lower_url:
+            continue
+
+        return {
+            "title": title or "Wikipedia",
+            "article_url": article_url,
+            "image_url": image_url,
+            "source": "Wikipedia",
+        }
+
+    return None
+
+
+def get_random_commons_image():
+    """
+    Резерв: случайный файл из Wikimedia Commons.
+    Большинство изображений Википедии физически хранятся именно там.
+
+    Это тоже делается одним API-запросом — без спама запросами.
+    """
+    data = wiki_request(
+        WIKIMEDIA_COMMONS_API_URL,
+        {
+            "action": "query",
+            "generator": "random",
+            "grnnamespace": 6,
+            "grnlimit": 10,
+            "prop": "imageinfo",
+            "iiprop": "url|mime",
+            "iiurlwidth": 1280,
+            "format": "json",
+            "formatversion": 2,
+            "origin": "*",
+        },
+        attempts=3,
+    )
+
+    pages = data.get("query", {}).get("pages", [])
+    random.shuffle(pages)
+
+    for page in pages:
+        title = str(page.get("title", "")).strip()
+
+        info_list = page.get("imageinfo") or []
+        if not info_list:
+            continue
+
+        info = info_list[0]
+
+        mime = str(info.get("mime", "")).lower()
+        image_url = (
+            info.get("thumburl")
+            or info.get("url")
+        )
+
+        if not isinstance(image_url, str):
+            continue
+
+        if not image_url.startswith("https://"):
+            continue
+
+        if not mime.startswith("image/"):
+            continue
+
+        # SVG/GIF/TIFF часто плохо идут через Telegram send_photo.
+        if mime in {
+            "image/svg+xml",
+            "image/gif",
+            "image/tiff",
+        }:
+            continue
+
+        page_url = (
+            "https://commons.wikimedia.org/wiki/"
+            + requests.utils.quote(title.replace(" ", "_"))
+        )
+
+        return {
+            "title": title.removeprefix("File:"),
+            "article_url": page_url,
+            "image_url": image_url,
+            "source": "Wikimedia Commons",
+        }
+
+    return None
+
+
+def download_wiki_image(image_url):
+    """
+    Скачиваем выбранную картинку только ОДИН раз.
+    """
+    response = requests.get(
+        image_url,
+        headers={
+            "User-Agent": WIKI_HEADERS["User-Agent"],
+            "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+        },
+        timeout=(5, 20),
+    )
+
+    response.raise_for_status()
+
+    content_type = response.headers.get(
+        "Content-Type",
+        ""
+    ).lower()
+
+    if "image" not in content_type:
+        raise RuntimeError(
+            f"Источник вернул не изображение: {content_type}"
+        )
+
+    image_bytes = response.content
+
+    if not image_bytes:
+        raise RuntimeError("Получена пустая картинка.")
+
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise RuntimeError("Картинка больше 10 МБ.")
+
+    return image_bytes
+
+
+def get_random_wikipedia_image():
+    """
+    Схема без бесконечного спама API:
+      1. один batch-запрос к русской Wikipedia;
+      2. при неудаче — один batch-запрос к Wikimedia Commons;
+      3. скачивание только одной выбранной картинки.
+    """
+    last_error = None
+
+    try:
+        item = get_random_wikipedia_page_image()
+        if item:
+            item["image_bytes"] = download_wiki_image(
+                item["image_url"]
+            )
+            return item
+
+    except Exception as e:
+        last_error = e
+        print(
+            "RAND_WIKI WIKIPEDIA ERROR:",
+            repr(e),
+            flush=True,
+        )
+
+    try:
+        item = get_random_commons_image()
+        if item:
+            item["image_bytes"] = download_wiki_image(
+                item["image_url"]
+            )
+            return item
+
+    except Exception as e:
+        last_error = e
+        print(
+            "RAND_WIKI COMMONS ERROR:",
+            repr(e),
+            flush=True,
+        )
+
+    raise RuntimeError(
+        "Не удалось получить случайную картинку. "
         f"Последняя ошибка: {last_error}"
     )
 
@@ -808,7 +986,7 @@ def get_random_wikipedia_image():
 def rand_wiki_command(message):
     status = bot.reply_to(
         message,
-        "🌐 Ищу случайную картинку в Википедии..."
+        "🌐 Ищу случайную картинку..."
     )
 
     def task():
@@ -817,6 +995,7 @@ def rand_wiki_command(message):
 
             caption = (
                 f"🌐 {item['title']}\n"
+                f"Источник: {item['source']}\n"
                 f"{item['article_url']}"
             ).strip()
 
@@ -840,6 +1019,7 @@ def rand_wiki_command(message):
 
             print(
                 "RAND_WIKI OK:",
+                item["source"],
                 item["title"],
                 flush=True,
             )
@@ -853,7 +1033,7 @@ def rand_wiki_command(message):
 
             try:
                 bot.edit_message_text(
-                    f"❌ Не удалось получить картинку из Википедии:\n"
+                    f"❌ Не удалось получить картинку:\n"
                     f"{str(e)[:600]}",
                     message.chat.id,
                     status.message_id,
