@@ -14,6 +14,7 @@ import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
 from openai import OpenAI
+from free_chat import GroqChat, ChatUnavailable
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -24,11 +25,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "chat-latest")
-OPENAI_TRANSCRIBE_MODEL = os.environ.get(
-    "OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"
-)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+GROQ_CHAT_MODEL = os.environ.get("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
 HF_TOKEN = os.environ.get("HF_TOKEN")  # Бесплатный токен от Hugging Face
 BOT_USERNAME = "@chaitom_bot"
 
@@ -36,14 +34,16 @@ if not TELEGRAM_TOKEN:
     raise RuntimeError("Не задан TELEGRAM_TOKEN")
 if not GEMINI_API_KEY:
     raise RuntimeError("Не задан GEMINI_API_KEY (нужен для изображений и видео)")
-if not OPENAI_API_KEY:
-    raise RuntimeError("Не задан OPENAI_API_KEY (нужен для ChatGPT)")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
 genai.configure(api_key=GEMINI_API_KEY)
 image_client = new_genai.Client(api_key=GEMINI_API_KEY)
-chat_client = OpenAI(api_key=OPENAI_API_KEY)
+chat_client = (
+    OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1",
+           timeout=30.0, max_retries=0)
+    if GROQ_API_KEY else None
+)
 
 # ==========================================================
 # PERSISTENT HISTORY (ПАМЯТЬ БОТА)
@@ -121,6 +121,8 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 
 Не используй звездочки и markdown."""
 
+conversation = GroqChat(chat_client, SYSTEM_PROMPT, model=GROQ_CHAT_MODEL)
+
 model = genai.GenerativeModel(
     "gemini-3.6-flash",  # Возвращаем нашу стабильную рабочую версию!
     system_instruction=SYSTEM_PROMPT,
@@ -131,41 +133,6 @@ model = genai.GenerativeModel(
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ],
 )
-
-def chatgpt_reply(prompt, image_bytes=None, image_mime="image/jpeg"):
-    """Ответ через модель ChatGPT; при необходимости добавляет фото."""
-    content = [{"type": "input_text", "text": prompt}]
-    if image_bytes:
-        image_base64 = base64.b64encode(image_bytes).decode("ascii")
-        content.append({
-            "type": "input_image",
-            "image_url": f"data:{image_mime};base64,{image_base64}",
-        })
-
-    response = chat_client.responses.create(
-        model=OPENAI_CHAT_MODEL,
-        instructions=SYSTEM_PROMPT,
-        input=[{"role": "user", "content": content}],
-        max_output_tokens=300,
-        store=False,
-    )
-    reply = response.output_text.strip()
-    if not reply:
-        raise RuntimeError("ChatGPT вернул пустой ответ")
-    return reply.replace("*", "")
-
-def chatgpt_transcribe(audio_bytes, file_name):
-    """Распознаёт голосовое сообщение перед передачей диалога в ChatGPT."""
-    audio_file = io.BytesIO(audio_bytes)
-    audio_file.name = file_name
-    transcript = chat_client.audio.transcriptions.create(
-        model=OPENAI_TRANSCRIBE_MODEL,
-        file=audio_file,
-    )
-    text = transcript.text.strip()
-    if not text:
-        raise RuntimeError("Не удалось распознать голосовое сообщение")
-    return text
 
 # ==========================================================
 # HELPERS
@@ -807,11 +774,13 @@ def music_command(message):
 #[тег1] #[тег2] #[тег3]
 """
     try:
-        response = model.generate_content([music_prompt])
-        reply = response.text.replace("*", "").strip()
+        reply = conversation.reply(music_prompt)
         bot.edit_message_text(reply, message.chat.id, status_msg.message_id)
+    except ChatUnavailable as e:
+        bot.edit_message_text(str(e), message.chat.id, status_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"Плеер зажевал кассету: {e}", message.chat.id, status_msg.message_id)
+        print("MUSIC ERROR:", type(e).__name__, flush=True)
+        bot.edit_message_text("Плеер зажевал кассету. Попробуй чуть позже.", message.chat.id, status_msg.message_id)
 
 # ==========================================================
 # START
@@ -881,34 +850,35 @@ def handle_message(message):
             return
 
     try:
-        history = "\n".join(dialog_context[chat_id])
-        image_bytes = None
-
         if message.photo:
-            info = bot.get_file(message.photo[-1].file_id)
-            image_bytes = bot.download_file(info.file_path)
+            bot.reply_to(message, "Пока умею читать текст и слушать голосовые. Опиши фотографию словами — обсудим!")
+            return
 
         elif message.voice or message.audio:
             media = message.voice if message.voice else message.audio
             info = bot.get_file(media.file_id)
             data = bot.download_file(info.file_path)
             file_name = "voice.ogg" if message.voice else (media.file_name or "audio.mp3")
-            transcript = chatgpt_transcribe(data, file_name)
+            transcript = conversation.transcribe(data, file_name)
             dialog_context[chat_id][-1] = f"{user_name}: {transcript}"
-            history = "\n".join(dialog_context[chat_id])
+
+        # Keep the recent conversation inside the free provider's token limits.
+        history = "\n".join(line[-600:] for line in dialog_context[chat_id][-10:])
 
         prompt = (
             f"Последние сообщения:\n{history}\n\n"
             f"Ответь на последнее сообщение {user_name}."
         )
 
-        reply = chatgpt_reply(prompt, image_bytes=image_bytes)
+        reply = conversation.reply(prompt)
         bot.reply_to(message, reply)
         dialog_context[chat_id].append(f"читом бот: {reply}")
 
+    except ChatUnavailable as e:
+        bot.reply_to(message, str(e))
     except Exception as e:
-        print("CHAT ERROR:", repr(e))
-        bot.reply_to(message, f"Мой клубок запутался. Ошибка: {e}")
+        print("CHAT ERROR:", type(e).__name__, flush=True)
+        bot.reply_to(message, "Мой клубок запутался. Попробуй написать ещё раз чуть позже.")
 
 # ==========================================================
 # HEALTH SERVER
@@ -916,6 +886,13 @@ def handle_message(message):
 
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/health/chat":
+            # Reports the last check; never triggers a paid/free API request.
+            self.send_response(200 if conversation.health["status"] == "ok" else 503)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(conversation.health).encode("utf-8"))
+            return
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Chaitom bot is running")
@@ -938,6 +915,8 @@ threading.Thread(target=run_server, daemon=True).start()
 # ==========================================================
 
 if __name__ == "__main__":
-    print("Читом бот запущен")
+    print("Читом бот запущен; разговоры через Groq", flush=True)
     print(f"Загружено {len(chat_history)} фраз в память")
+    # One synthetic request per startup verifies the deployed key and model.
+    threading.Thread(target=conversation.startup_check, daemon=True).start()
     bot.infinity_polling()
