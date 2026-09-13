@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from free_chat import ChatUnavailable, GroqChat
+from free_chat import ChatUnavailable, GroqChat, build_chat_prompt, split_telegram_text
 
 
 class ProviderError(Exception):
@@ -23,11 +23,12 @@ class FreeChatTests(unittest.TestCase):
         )
 
     def test_russian_response_uses_only_final_text(self):
-        self.assertEqual(self.backend.reply("Привет"), "Привет, клубок!")
+        self.assertEqual(self.backend.reply("Привет"), "Привет, *клубок*!")
         args = self.client.chat.completions.create.call_args.kwargs
         self.assertEqual(args["model"], "openai/gpt-oss-120b")
         self.assertEqual(args["messages"][0]["role"], "system")
         self.assertEqual(args["extra_body"], {"include_reasoning": False})
+        self.assertEqual(args["max_completion_tokens"], 4096)
         self.assertEqual(self.backend.health["status"], "ok")
 
     def test_long_context_retains_latest_message(self):
@@ -76,7 +77,29 @@ class FreeChatTests(unittest.TestCase):
         self.client.audio.transcriptions.create.side_effect = ProviderError(429)
         with self.assertRaises(ChatUnavailable):
             self.backend.transcribe(b"test-audio", "voice.ogg")
-        self.assertEqual(self.backend.reply("Привет"), "Привет, клубок!")
+        self.assertEqual(self.backend.reply("Привет"), "Привет, *клубок*!")
+
+    def test_detailed_answer_is_not_truncated_or_code_corrupted(self):
+        answer = "Подробное объяснение: x = 2 * 3\n" * 400
+        self.client.chat.completions.create.return_value.choices[0].message.content = answer
+        self.assertEqual(self.backend.reply("Объясни подробно"), answer.strip())
+
+    def test_chunks_preserve_all_text_and_fit_telegram(self):
+        for answer in ("Коротко", "а" * 14000, "😀" * 5000,
+                       "Абзац с формулой 2 * 3.\n\n" * 700):
+            with self.subTest(prefix=answer[:20]):
+                chunks = split_telegram_text(answer)
+                self.assertEqual("".join(chunks), answer)
+                for chunk in chunks:
+                    self.assertTrue(chunk)
+                    self.assertLessEqual(len(chunk.encode("utf-16-le")) // 2, 4000)
+
+    def test_latest_request_survives_old_context_budget(self):
+        latest = "Начало важного запроса " + "я" * 4000 + " конец"
+        prompt = build_chat_prompt(["старое" * 2000] * 15 + [latest], "Иван")
+        self.backend.reply(prompt)
+        sent = self.client.chat.completions.create.call_args.kwargs["messages"][-1]["content"]
+        self.assertIn(latest, sent)
 
     def test_startup_check_verifies_provider_without_sending_telegram_messages(self):
         self.backend.startup_check()

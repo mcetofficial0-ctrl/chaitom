@@ -15,7 +15,7 @@ import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
 from openai import OpenAI
-from free_chat import GroqChat, ChatUnavailable
+from free_chat import GroqChat, ChatUnavailable, build_chat_prompt, split_telegram_text
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -45,7 +45,7 @@ else:
     image_client = None
 chat_client = (
     OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1",
-           timeout=30.0, max_retries=0)
+           timeout=60.0, max_retries=0)
     if GROQ_API_KEY else None
 )
 
@@ -419,19 +419,26 @@ def discover_rym_film_cover(film):
 # ==========================================================
 
 SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом бот".
-Твой характер: ироничный, абсурдный и саркастичный шутник.
+Отвечай ясно, по существу и достаточно подробно, чтобы пользователь понял ответ
+и мог им воспользоваться. Пиши на языке пользователя, по умолчанию на русском.
 
-Отвечай очень коротко: 1-3 предложения.
-Никаких длинных монологов.
+Сначала дай прямой ответ или главный вывод. Затем объясни важные детали,
+причины и ограничения. Для практических задач предложи конкретные шаги;
+для сложных понятий добавь понятный пример и объясни незнакомые термины.
+Отвечай на все части запроса. Не заменяй полезное объяснение шуткой.
 
-Иногда используй слова: "читом", "клубок", "бастурма".
+Соразмеряй объём задаче: сложный вопрос разбери подробно, на приветствие
+или простой вопрос ответь кратко. Если пользователь просит коротко или задаёт
+формат, соблюдай его. Избегай повторов, воды и ненужных вступлений.
+Будь дружелюбным, без навязчивого сарказма.
 
-Твои знакомые:
-- Степан Клитор — депрессивный музыкант.
-- Андрей Визард — фанат бургеров.
-- Роман Линкин — фанат My Little Pony.
+Не выдумывай факты, ссылки и источники. Отмечай неопределённость и предположения.
+Не утверждай, что проверил актуальные сведения в интернете, если не проверял.
+Если без важной детали нельзя дать полезный ответ, задай конкретный вопрос.
 
-Не используй звездочки и markdown."""
+Используй обычный текст, абзацы и при необходимости нумерованные списки.
+Не используй Markdown-разметку, таблицы и декоративные звёздочки;
+сохраняй необходимые символы в коде и формулах."""
 
 conversation = GroqChat(chat_client, SYSTEM_PROMPT, model=GROQ_CHAT_MODEL)
 
@@ -1803,7 +1810,10 @@ def music_command(message):
 """
     try:
         reply = conversation.reply(music_prompt)
-        bot.edit_message_text(reply, message.chat.id, status_msg.message_id)
+        chunks = split_telegram_text(reply)
+        bot.edit_message_text(chunks[0], message.chat.id, status_msg.message_id)
+        for chunk in chunks[1:]:
+            bot.reply_to(message, chunk)
     except ChatUnavailable as e:
         bot.edit_message_text(str(e), message.chat.id, status_msg.message_id)
     except Exception as e:
@@ -1894,16 +1904,11 @@ def handle_message(message):
             transcript = conversation.transcribe(data, file_name)
             dialog_context[chat_id][-1] = f"{user_name}: {transcript}"
 
-        # Keep the recent conversation inside the free provider's token limits.
-        history = "\n".join(line[-600:] for line in dialog_context[chat_id][-10:])
-
-        prompt = (
-            f"Последние сообщения:\n{history}\n\n"
-            f"Ответь на последнее сообщение {user_name}."
-        )
+        prompt = build_chat_prompt(dialog_context[chat_id], user_name)
 
         reply = conversation.reply(prompt)
-        bot.reply_to(message, reply)
+        for chunk in split_telegram_text(reply):
+            bot.reply_to(message, chunk)
         dialog_context[chat_id].append(f"читом бот: {reply}")
 
     except ChatUnavailable as e:

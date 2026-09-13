@@ -6,6 +6,39 @@ import threading
 import time
 
 
+def split_telegram_text(text, limit=4000):
+    """Split without losing characters; count Telegram's UTF-16 units."""
+    if limit < 2:
+        raise ValueError("limit must be at least 2")
+    chunks = []
+    while text:
+        units = 0
+        end = 0
+        for char in text:
+            size = 2 if ord(char) > 0xFFFF else 1
+            if units + size > limit:
+                break
+            units += size
+            end += 1
+        if end < len(text):
+            boundary = text.rfind("\n", 0, end)
+            if boundary < end // 2:
+                boundary = text.rfind(" ", 0, end)
+            if boundary >= end // 2:
+                end = boundary + 1
+        chunks.append(text[:end])
+        text = text[end:]
+    return chunks
+
+
+def build_chat_prompt(history, user_name):
+    """Budget older context separately so a full text request is retained."""
+    previous = "\n".join(line[-400:] for line in history[-6:-1])
+    latest = history[-1] if history else ""
+    return (f"Предыдущие сообщения (контекст):\n{previous}\n\n"
+            f"Ответь на текущий запрос пользователя {user_name}:\n{latest}")
+
+
 class ChatUnavailable(RuntimeError):
     """A short message that is safe to show in Telegram."""
 
@@ -60,14 +93,14 @@ class GroqChat:
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": prompt[-6500:]},
                 ],
-                max_completion_tokens=1024,
+                max_completion_tokens=4096,
                 reasoning_effort="low",
                 extra_body={"include_reasoning": False},
             )
             content = (result.choices[0].message.content or "").strip()
             if not content:
                 raise ValueError("empty_response")
-            return content.replace("*", "")[:4000]
+            return content
 
         answer = self._call("chat", request)
         self.health = {"provider": "groq", "model": self.model, "status": "ok"}
