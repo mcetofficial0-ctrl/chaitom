@@ -15,7 +15,8 @@ import google.generativeai as genai
 from google import genai as new_genai
 from google.genai import types
 from openai import OpenAI
-from free_chat import GroqChat, ChatUnavailable, build_chat_prompt, split_telegram_text
+from free_chat import GroqChat, ChatUnavailable, build_chat_prompt
+from chat_formatting import format_chat_reply
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -436,9 +437,16 @@ SYSTEM_PROMPT = """Ты — ИИ-ассистент по имени "читом 
 Не утверждай, что проверил актуальные сведения в интернете, если не проверял.
 Если без важной детали нельзя дать полезный ответ, задай конкретный вопрос.
 
-Используй обычный текст, абзацы и при необходимости нумерованные списки.
-Не используй Markdown-разметку, таблицы и декоративные звёздочки;
-сохраняй необходимые символы в коде и формулах."""
+Оформляй ответы для удобного чтения в Telegram:
+- Разделяй смысловые блоки пустой строкой; пиши небольшими абзацами.
+- В длинном ответе используй короткие заголовки вида ## Заголовок.
+- Выделяй главные выводы и важные слова как **жирный текст**, без избытка.
+- Для перечислений используй список с дефисами, для шагов — нумерацию.
+- Команды и имена файлов оформляй в `обратных кавычках`, многострочный код —
+  в блоке из трёх обратных кавычек с названием языка на первой строке.
+- Не используй таблицы, HTML-теги, вложенное выделение и декоративные разделители.
+- Ссылки указывай обычным полным URL. Не перегружай ответ эмодзи.
+На короткий вопрос не добавляй ненужные заголовки. Сохраняй символы кода и формул."""
 
 conversation = GroqChat(chat_client, SYSTEM_PROMPT, model=GROQ_CHAT_MODEL)
 
@@ -1810,10 +1818,10 @@ def music_command(message):
 """
     try:
         reply = conversation.reply(music_prompt)
-        chunks = split_telegram_text(reply)
-        bot.edit_message_text(chunks[0], message.chat.id, status_msg.message_id)
+        chunks = format_chat_reply(reply)
+        bot.edit_message_text(chunks[0], message.chat.id, status_msg.message_id, parse_mode="HTML")
         for chunk in chunks[1:]:
-            bot.reply_to(message, chunk)
+            bot.reply_to(message, chunk, parse_mode="HTML")
     except ChatUnavailable as e:
         bot.edit_message_text(str(e), message.chat.id, status_msg.message_id)
     except Exception as e:
@@ -1907,8 +1915,8 @@ def handle_message(message):
         prompt = build_chat_prompt(dialog_context[chat_id], user_name)
 
         reply = conversation.reply(prompt)
-        for chunk in split_telegram_text(reply):
-            bot.reply_to(message, chunk)
+        for chunk in format_chat_reply(reply):
+            bot.reply_to(message, chunk, parse_mode="HTML")
         dialog_context[chat_id].append(f"читом бот: {reply}")
 
     except ChatUnavailable as e:
