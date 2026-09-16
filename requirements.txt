@@ -8,3 +8,4 @@ google-genai
 huggingface_hub
 requests
 beautifulsoup4>=4.12,<5
+gradio_client>=2,<3

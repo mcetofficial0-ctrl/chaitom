@@ -17,6 +17,7 @@ from google.genai import types
 from openai import OpenAI
 from free_chat import GroqChat, ChatUnavailable, build_chat_prompt
 from chat_formatting import format_chat_reply
+from free_video import generate_video, VideoUnavailable
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -1497,10 +1498,10 @@ def edit_command(message):
     threading.Thread(target=task, daemon=True).start()
 
 # ==========================================================
-# VEO 3.1 FAST (VIDEO - Платный Гугл, может выдавать 429)
+# FREE WAN 2.2 VIDEO (shared ZeroGPU quota; no paid fallback)
 # ==========================================================
 
-VEO_MODEL = "veo-3.1-fast-generate-preview"
+VIDEO_LOCK = threading.Lock()
 
 def get_video_image(message):
     if message.photo:
@@ -1509,39 +1510,6 @@ def get_video_image(message):
     if reply and reply.photo:
         return reply
     return None
-
-def download_image(message):
-    info = bot.get_file(message.photo[-1].file_id)
-    data = bot.download_file(info.file_path)
-    return types.Image(image_bytes=data, mime_type="image/jpeg")
-
-def generate_veo(prompt, message_id, source_image=None):
-    veo_prompt = f"Create a short video: {prompt}"
-    config = types.GenerateVideosConfig(
-        number_of_videos=1,
-        resolution="720p",
-        aspect_ratio="16:9"
-    )
-    source = types.GenerateVideosSource(prompt=veo_prompt, image=source_image)
-
-    operation = image_client.models.generate_videos(
-        model=VEO_MODEL, source=source, config=config
-    )
-
-    while not operation.done:
-        time.sleep(10)
-        operation = image_client.operations.get(operation)
-
-    videos = getattr(getattr(operation, "response", None), "generated_videos", None)
-    if not videos or not videos[0].video:
-        raise RuntimeError("Veo не вернул видео.")
-
-    video = videos[0].video
-    image_client.files.download(file=video)
-
-    filename = f"veo_{message_id}_{int(time.time())}.mp4"
-    video.save(filename)
-    return filename
 
 @bot.message_handler(
     func=lambda m: is_command(m, ["video", "vid"]),
@@ -1555,64 +1523,48 @@ def video_command(message):
     if not prompt:
         bot.reply_to(message, "Напиши, что снять. Например: /video кот бежит по лесу")
         return
-    if image_client is None:
-        bot.reply_to(message, "Для видео администратору нужно настроить GEMINI_API_KEY.")
+    if len(prompt) > 2000:
+        bot.reply_to(message, "Опиши видео текстом до 2000 символов.")
+        return
+    if not VIDEO_LOCK.acquire(blocking=False):
+        bot.reply_to(message, "🎬 Уже создаю один ролик. Дождись его завершения и повтори запрос.")
         return
 
     try:
-        source_image = download_image(source) if source else None
+        source_image = None
+        if source:
+            info = bot.get_file(source.photo[-1].file_id)
+            source_image = bot.download_file(info.file_path)
+        status = bot.reply_to(
+            message,
+            "🎬 Wan 2.2 создаёт бесплатный ролик (~2 секунды, без звука). "
+            "Описание и фото обрабатываются публичным сервисом Hugging Face. "
+            "Возможны очередь и дневной лимит; ожидание — до 4 минут."
+        )
     except Exception as e:
-        bot.reply_to(message, f"Ошибка загрузки фото: {e}")
+        VIDEO_LOCK.release()
+        bot.reply_to(message, "Не удалось подготовить запрос. Попробуй ещё раз.")
         return
 
-    status = bot.reply_to(
-        message,
-        "🎬 Оживляю изображение..." if source_image else "🎬 Veo 3.1 Fast рендерит..."
-    )
-
     def task():
-        video_file = None
-        last_error = None
-
-        for attempt in range(1, 4):
+        try:
+            data = generate_video(prompt, source_image)
+            video = io.BytesIO(data)
+            video.name = "wan-video.mp4"
+            bot.send_video(message.chat.id, video,
+                           reply_to_message_id=message.message_id,
+                           supports_streaming=True)
+            bot.edit_message_text("✅ Видео готово · Wan 2.2", message.chat.id, status.message_id)
+        except VideoUnavailable as error:
+            bot.edit_message_text(str(error), message.chat.id, status.message_id)
+        except Exception as error:
+            print(f"VIDEO DELIVERY ERROR type={type(error).__name__}", flush=True)
             try:
-                video_file = generate_veo(prompt, message.message_id, source_image)
-                break
-            except Exception as e:
-                last_error = e
-                if not temp_error(e) or attempt == 3:
-                    break
-                time.sleep(min(2 ** attempt, 15))
-
-        if not video_file:
-            try:
-                bot.edit_message_text(
-                    f"❌ Ошибка Veo (возможно лимит):\n{str(last_error)[:500]}",
-                    message.chat.id,
-                    status.message_id
-                )
+                bot.edit_message_text("Не удалось отправить видео. Попробуй позже.", message.chat.id, status.message_id)
             except Exception:
                 pass
-            return
-
-        try:
-            bot.delete_message(message.chat.id, status.message_id)
-        except Exception:
-            pass
-
-        try:
-            with open(video_file, "rb") as video:
-                bot.send_video(
-                    message.chat.id,
-                    video,
-                    reply_to_message_id=message.message_id,
-                    supports_streaming=True
-                )
         finally:
-            try:
-                os.remove(video_file)
-            except Exception:
-                pass
+            VIDEO_LOCK.release()
 
     threading.Thread(target=task, daemon=True).start()
 
@@ -1838,7 +1790,7 @@ def start_command(message):
         message,
         "/draw — нарисовать картинку\n"
         "/edit — отредактировать фото\n"
-        "/video — видео\n"
+        "/video описание — бесплатное видео Wan 2.2 (можно ответить на фото)\n"
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
         "/rym — случайный альбом из эзотерического топа RYM\n"
