@@ -1793,6 +1793,7 @@ def start_command(message):
         "/video описание — бесплатное видео Wan 2.2 (можно ответить на фото)\n"
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
+        "/three — 6 сообщений с цифрой 3\n"
         "/stop — остановить свой длинный ответ\n"
         "/rym — случайный альбом из эзотерического топа RYM\n"
         "/film — случайный фильм из эзотерического топа RYM\n"
@@ -1818,6 +1819,35 @@ def stop_chat_reply(message):
         if event is not None:
             event.set()
     bot.reply_to(message, "Останавливаю ответ." if event is not None else "Нет активного ответа.")
+
+
+def send_threes(message, key, stop_event):
+    try:
+        for index in range(6):
+            if stop_event.is_set():
+                return
+            bot.reply_to(message, "3" * 3000)
+            if index < 5 and stop_event.wait(1.1):
+                return
+    except Exception as error:
+        print("THREE ERROR:", type(error).__name__, flush=True)
+    finally:
+        with active_chat_lock:
+            if active_chat_replies.get(key) is stop_event:
+                del active_chat_replies[key]
+
+
+@bot.message_handler(commands=["three"])
+def three_command(message):
+    key = (message.chat.id, message.from_user.id)
+    event = threading.Event()
+    with active_chat_lock:
+        previous = active_chat_replies.get(key)
+        if previous is not None:
+            previous.set()
+        active_chat_replies[key] = event
+    # Leave Telegram's handler workers available for /stop.
+    threading.Thread(target=send_threes, args=(message, key, event), daemon=True).start()
 
 
 @bot.message_handler(content_types=["text", "photo", "voice", "audio"])
