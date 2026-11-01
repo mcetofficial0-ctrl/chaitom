@@ -1,4 +1,5 @@
 import unittest
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -30,6 +31,58 @@ class FreeChatTests(unittest.TestCase):
         self.assertEqual(args["extra_body"], {"include_reasoning": False})
         self.assertEqual(args["max_completion_tokens"], 4096)
         self.assertEqual(self.backend.health["status"], "ok")
+
+    def response(self, text, reason):
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content=text), finish_reason=reason,
+        )])
+
+    def test_continues_only_truncated_answers_with_previous_context(self):
+        self.client.chat.completions.create.side_effect = [
+            self.response("Начало", "length"), self.response("Конец", "stop"),
+        ]
+        self.assertEqual(list(self.backend.reply_parts("Запрос")), ["Начало", "Конец"])
+        calls = self.client.chat.completions.create.call_args_list
+        self.assertEqual(len(calls[0].kwargs["messages"]), 2)
+        self.assertIn({"role": "assistant", "content": "Начало"}, calls[1].kwargs["messages"])
+        self.assertEqual(len(calls), 2)
+
+    def test_completed_answer_does_not_request_continuation(self):
+        self.client.chat.completions.create.return_value = self.response("Готово", "stop")
+        self.assertEqual(list(self.backend.reply_parts("Запрос")), ["Готово"])
+        self.client.chat.completions.create.assert_called_once()
+
+    def test_continuations_are_bounded_and_limit_is_reported(self):
+        self.client.chat.completions.create.return_value = self.response("Часть", "length")
+        parts = list(self.backend.reply_parts("Запрос"))
+        self.assertEqual(self.client.chat.completions.create.call_count, 6)
+        self.assertIn("лимит", parts[-1])
+
+    def test_stop_prevents_next_request(self):
+        event = threading.Event()
+        self.client.chat.completions.create.return_value = self.response("Часть", "length")
+        parts = self.backend.reply_parts("Запрос", stop_event=event)
+        self.assertEqual(next(parts), "Часть")
+        event.set()
+        self.assertEqual(list(parts), [])
+        self.client.chat.completions.create.assert_called_once()
+
+    def test_stop_during_request_discards_response(self):
+        event = threading.Event()
+        def request(**kwargs):
+            event.set()
+            return self.response("Не отправлять", "length")
+        self.client.chat.completions.create.side_effect = request
+        self.assertEqual(list(self.backend.reply_parts("Запрос", stop_event=event)), [])
+
+    def test_continuation_error_keeps_already_yielded_part(self):
+        self.client.chat.completions.create.side_effect = [
+            self.response("Начало", "length"), ProviderError(429),
+        ]
+        parts = self.backend.reply_parts("Запрос")
+        self.assertEqual(next(parts), "Начало")
+        with self.assertRaises(ChatUnavailable):
+            next(parts)
 
     def test_long_context_retains_latest_message(self):
         self.backend.reply("a" * 20000 + "Последнее сообщение")

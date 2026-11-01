@@ -1793,6 +1793,7 @@ def start_command(message):
         "/video описание — бесплатное видео Wan 2.2 (можно ответить на фото)\n"
         "/make_meme — мем\n"
         "/music — сгенерировать скроббл\n"
+        "/stop — остановить свой длинный ответ\n"
         "/rym — случайный альбом из эзотерического топа RYM\n"
         "/film — случайный фильм из эзотерического топа RYM\n"
         "/rand_wiki — случайная картинка из Википедии\n"
@@ -1804,6 +1805,20 @@ def start_command(message):
 # ==========================================================
 # GENERAL CHAT
 # ==========================================================
+
+active_chat_replies = {}
+active_chat_lock = threading.Lock()
+
+
+@bot.message_handler(commands=["stop"])
+def stop_chat_reply(message):
+    key = (message.chat.id, message.from_user.id)
+    with active_chat_lock:
+        event = active_chat_replies.get(key)
+        if event is not None:
+            event.set()
+    bot.reply_to(message, "Останавливаю ответ." if event is not None else "Нет активного ответа.")
+
 
 @bot.message_handler(content_types=["text", "photo", "voice", "audio"])
 def handle_message(message):
@@ -1851,6 +1866,14 @@ def handle_message(message):
         if not (mentioned or replied):
             return
 
+    reply_key = (chat_id, message.from_user.id)
+    stop_event = threading.Event()
+    with active_chat_lock:
+        previous = active_chat_replies.get(reply_key)
+        if previous is not None:
+            previous.set()
+        active_chat_replies[reply_key] = stop_event
+
     try:
         if message.photo:
             bot.reply_to(message, "Пока умею читать текст и слушать голосовые. Опиши фотографию словами — обсудим!")
@@ -1866,16 +1889,28 @@ def handle_message(message):
 
         prompt = build_chat_prompt(dialog_context[chat_id], user_name)
 
-        reply = conversation.reply(prompt)
-        for chunk in format_chat_reply(reply):
-            bot.reply_to(message, chunk, parse_mode="HTML")
-        dialog_context[chat_id].append(f"читом бот: {reply}")
+        for reply in conversation.reply_parts(prompt, stop_event=stop_event):
+            for chunk in format_chat_reply(reply):
+                if stop_event.is_set():
+                    return
+                bot.reply_to(message, chunk, parse_mode="HTML")
+                # Pace multi-message replies; cancellation interrupts the pause.
+                if stop_event.wait(1.1):
+                    return
+            dialog_context[chat_id].append(f"читом бот: {reply}")
+            dialog_context[chat_id] = dialog_context[chat_id][-CONTEXT_LIMIT:]
 
     except ChatUnavailable as e:
-        bot.reply_to(message, str(e))
+        if not stop_event.is_set():
+            bot.reply_to(message, str(e))
     except Exception as e:
         print("CHAT ERROR:", type(e).__name__, flush=True)
-        bot.reply_to(message, "Мой клубок запутался. Попробуй написать ещё раз чуть позже.")
+        if not stop_event.is_set():
+            bot.reply_to(message, "Мой клубок запутался. Попробуй написать ещё раз чуть позже.")
+    finally:
+        with active_chat_lock:
+            if active_chat_replies.get(reply_key) is stop_event:
+                del active_chat_replies[reply_key]
 
 # ==========================================================
 # HEALTH SERVER

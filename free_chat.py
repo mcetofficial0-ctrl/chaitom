@@ -86,13 +86,21 @@ class GroqChat:
             raise ChatUnavailable("Разговорная модель сейчас недоступна. Попробуй чуть позже; /rym работает отдельно.") from None
 
     def reply(self, prompt):
+        return next(self.reply_parts(prompt, max_parts=1))
+
+    def reply_parts(self, prompt, max_parts=6, stop_event=None):
+        """Continue token-truncated answers, yielding each part before requesting more."""
+        if not 1 <= max_parts <= 6:
+            raise ValueError("max_parts must be between 1 and 6")
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt[-6500:]},
+        ]
+
         def request():
             result = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt[-6500:]},
-                ],
+                messages=list(messages),
                 max_completion_tokens=4096,
                 reasoning_effort="low",
                 extra_body={"include_reasoning": False},
@@ -100,11 +108,30 @@ class GroqChat:
             content = (result.choices[0].message.content or "").strip()
             if not content:
                 raise ValueError("empty_response")
-            return content
+            return content, getattr(result.choices[0], "finish_reason", None)
 
-        answer = self._call("chat", request)
-        self.health = {"provider": "groq", "model": self.model, "status": "ok"}
-        return answer
+        for index in range(max_parts):
+            if stop_event is not None and stop_event.is_set():
+                return
+            answer, reason = self._call("chat", request)
+            self.health = {"provider": "groq", "model": self.model, "status": "ok"}
+            if stop_event is not None and stop_event.is_set():
+                return
+            yield answer
+            if reason != "length":
+                return
+            if index + 1 == max_parts:
+                if max_parts > 1:
+                    yield "Достигнут лимит автоматических продолжений. Напиши «продолжай», если нужен следующий фрагмент."
+                return
+            # Retain the complete generated answer so continuation has its context.
+            messages.extend([
+                {"role": "assistant", "content": answer},
+                {"role": "user", "content": (
+                    "Продолжи прерванный ответ точно с места остановки, без повторов "
+                    "и вступления. Когда исходный запрос выполнен, закончи ответ."
+                )},
+            ])
 
     def transcribe(self, data, filename):
         if len(data) > 25_000_000:
